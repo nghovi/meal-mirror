@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="1024"
+  height="1024"
+  viewBox="0 0 1024 1024"
+  fill="none">
+  <defs>
+    <style>
+      .stroke {
+        stroke: #5c3628;
+        stroke-width: 24;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .thin-stroke {
+        stroke: #5c3628;
+        stroke-width: 18;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .fill-cream {
+        fill: #f9f0e2;
+      }
+      .fill-brown {
+        fill: #5c3628;
+      }
+      .fill-gold {
+        fill: #f7c471;
+      }
+    </style>
+  </defs>
+
+  <!-- Main emblem -->
+  <g transform="translate(0 24)">
+    <!-- Scalloped plate outline -->
+    <g class="stroke">
+      <circle cx="512" cy="488" r="326"/>
+      <circle cx="512" cy="488" r="272"/>
+      <path d="M512 128
+               C560 128 604 142 642 168
+               C678 144 724 138 766 154
+               C808 170 842 202 860 242
+               C904 252 940 282 958 322
+               C976 364 974 410 956 448
+               C978 488 982 534 966 576
+               C950 618 918 652 876 674
+               C872 718 850 758 814 786
+               C778 814 734 826 692 820
+               C660 856 616 878 570 880
+               C524 882 478 866 442 836
+               C404 858 360 864 318 848
+               C276 832 242 800 224 760
+               C182 750 146 720 128 680
+               C110 638 112 592 130 554
+               C108 514 104 468 120 426
+               C136 384 168 350 210 328
+               C214 284 236 244 272 216
+               C308 188 352 176 394 182
+               C426 146 468 126 512 128Z"/>
+    </g>
+
+    <!-- Food glyphs -->
+    <g class="stroke">
+      <ellipse cx="394" cy="436" rx="58" ry="86" transform="rotate(-26 394 436)"/>
+      <path d="M454 592L355 691"/>
+      <path d="M428 566L329 665"/>
+
+      <path d="M559 572L669 682"/>
+      <path d="M533 598L643 708"/>
+
+      <path d="M512 517L404 409"/>
+      <path d="M512 517L618 411"/>
+
+      <path d="M560 413L623 350"/>
+      <path d="M587 385L650 322"/>
+
+      <path d="M615 431
+               C594 410 594 377 615 356
+               L682 289
+               C703 268 736 268 757 289"/>
+
+      <path d="M708 287L760 235"/>
+      <path d="M735 313L788 260"/>
+      <path d="M762 340L815 287"/>
+      <path d="M789 367L842 314"/>
+
+      <path d="M515 335
+               C545 365 545 414 515 444
+               C485 474 436 474 406 444
+               C376 414 376 365 406 335
+               C436 305 485 305 515 335Z"/>
+
+      <path d="M748 460
+               C788 410 844 386 883 402
+               C862 478 820 548 773 592
+               C746 556 732 506 748 460Z"/>
+
+      <path d="M595 654
+               C552 623 492 623 449 654
+               C492 693 552 693 595 654Z"/>
+    </g>
+
+    <!-- Small garnish / dot -->
+    <circle class="stroke" cx="623" cy="272" r="38"/>
+  </g>
+
+</svg>

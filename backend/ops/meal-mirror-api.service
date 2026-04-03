@@ -1,0 +1,17 @@
+[Unit]
+Description=Meal Mirror API
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/centos/apps/meal-mirror/backend
+Environment=NODE_ENV=production
+Environment=PORT=8787
+EnvironmentFile=-/home/centos/apps/meal-mirror/backend/.env.production
+ExecStart=/home/centos/apps/meal-mirror/backend/ops/run.sh
+Restart=always
+RestartSec=5
+User=centos
+
+[Install]
+WantedBy=multi-user.target

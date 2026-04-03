@@ -1,0 +1,136 @@
+# Meal Mirror Backend
+
+Small backend service for secure OpenAI-backed meal analysis, Mira chat, diet-goal summarizing, and device sync.
+
+The Flutter app can now call OpenAI directly without this backend if you pass:
+
+```bash
+flutter run --dart-define=OPENAI_API_KEY=your_key_here
+```
+
+Optional:
+
+```bash
+flutter run \
+  --dart-define=OPENAI_API_KEY=your_key_here \
+  --dart-define=OPENAI_MODEL=gpt-4.1-mini
+```
+
+This is convenient for local iteration, but it exposes your API key to the client app and is not recommended for production distribution.
+
+For production, prefer:
+
+```bash
+flutter run \
+  --dart-define=MEAL_MIRROR_API_BASE_URL=https://meal-mirror-api.truongdiem.online \
+  --dart-define=MEAL_MIRROR_SYNC_API_BASE_URL=https://meal-mirror-api.truongdiem.online
+```
+
+Then keep `OPENAI_API_KEY` only on the server.
+
+## Production files
+
+Templates for the production server are included here:
+
+- env example: [backend/.env.production.example](/Users/nam/projects/an_kieng/backend/.env.production.example)
+- run script: [backend/ops/run.sh](/Users/nam/projects/an_kieng/backend/ops/run.sh)
+- systemd unit: [backend/ops/meal-mirror-api.service](/Users/nam/projects/an_kieng/backend/ops/meal-mirror-api.service)
+- apache vhost: [backend/ops/meal-mirror-api.httpd.conf](/Users/nam/projects/an_kieng/backend/ops/meal-mirror-api.httpd.conf)
+- apache ssl vhost: [backend/ops/meal-mirror-api-ssl.httpd.conf](/Users/nam/projects/an_kieng/backend/ops/meal-mirror-api-ssl.httpd.conf)
+- nginx vhost: [backend/ops/meal-mirror-api.nginx.conf](/Users/nam/projects/an_kieng/backend/ops/meal-mirror-api.nginx.conf)
+
+Suggested production layout:
+
+- repo path: `/home/centos/apps/meal-mirror`
+- backend path: `/home/centos/apps/meal-mirror/backend`
+- public host: `https://meal-mirror-api.truongdiem.online`
+
+Suggested rollout:
+
+1. Copy this repo to `/home/centos/apps/meal-mirror`.
+2. Create `backend/.env.production` from the example and set `OPENAI_API_KEY`.
+3. Set the `MEAL_MIRROR_DB_*` values in `backend/.env.production`.
+4. Run `npm install` in `backend/`.
+5. Run `npm run db:setup` in `backend/`.
+6. Copy the systemd unit into `/etc/systemd/system/meal-mirror-api.service`.
+7. Copy the Apache vhost files into `/etc/httpd/conf.d/`.
+8. Issue the certificate and copy the generated fullchain/key into `/etc/ssl/private/`.
+9. Restart `systemd` and `httpd`.
+
+## Run locally
+
+```bash
+cd backend
+OPENAI_API_KEY=your_key_here node server.js
+```
+
+Default port: `8787`
+
+## Flutter app configuration
+
+Run the app with:
+
+```bash
+flutter run \
+  --dart-define=MEAL_MIRROR_API_BASE_URL=http://10.0.2.2:8787 \
+  --dart-define=MEAL_MIRROR_SYNC_API_BASE_URL=http://10.0.2.2:8787
+```
+
+For Android emulators, `10.0.2.2` points to the host machine.
+
+Use the backend route for production-style architecture, because it keeps the OpenAI key off the client.
+
+## Endpoints
+
+- `POST /analyze-meal`
+- `POST /diet-goal-brief`
+- `POST /coach-chat`
+- `GET /sync-state?deviceId=...`
+- `POST /sync-state`
+- `POST /upload-image`
+- `GET /uploads/...`
+
+Request JSON:
+
+```json
+{
+  "mealType": "lunch",
+  "capturedAt": "2026-04-01T12:30:00.000Z",
+  "images": [
+    {
+      "mimeType": "image/jpeg",
+      "base64": "..."
+    }
+  ]
+}
+```
+
+## Sync behavior
+
+The Flutter app now uses:
+- `MEAL_MIRROR_API_BASE_URL` for meal analysis, Mira chat, and diet-goal summarizing
+- `MEAL_MIRROR_SYNC_API_BASE_URL` for full app snapshot sync and image upload/restore
+
+The synced snapshot includes:
+- meal entries
+- diet goal
+- Mira chat history
+
+Meal images are uploaded separately and stored under `backend/data/uploads/`.
+Per-device snapshots are stored in the `device_snapshots` table in the `meal_mirror` MySQL database.
+
+Production sync is expected to live at `https://meal-mirror-api.truongdiem.online`.
+
+Example sync request:
+
+```json
+{
+  "deviceId": "abc123",
+  "snapshot": {
+    "updatedAt": "2026-04-03T08:00:00.000Z",
+    "entries": [],
+    "dietGoal": null,
+    "miraMessages": []
+  }
+}
+```
