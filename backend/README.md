@@ -119,6 +119,16 @@ The synced snapshot includes:
 Meal images are uploaded separately and stored under `backend/data/uploads/`.
 Per-device snapshots are stored in the `device_snapshots` table in the `meal_mirror` MySQL database.
 
+The backend also materializes normalized records during sync into:
+- `users`
+- `devices`
+- `meal_types`
+- `meals`
+- `meal_images`
+- `diet_goals`
+- `mira_conversations`
+- `mira_messages`
+
 Production sync is expected to live at `https://meal-mirror-api.truongdiem.online`.
 
 Example sync request:
