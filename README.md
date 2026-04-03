@@ -1,16 +1,13 @@
-# my_diet
+# Meal Mirror
 
-A new Flutter project.
+## Environment safety
 
-## Getting Started
+- App snapshot sync is disabled by default.
+- The app only syncs when `MEAL_MIRROR_SYNC_API_BASE_URL` is provided explicitly.
+- This prevents local development builds from accidentally reading from or writing to the production sync database.
 
-This project is a starting point for a Flutter application.
+## Local development
 
-A few resources to get you started if this is your first Flutter project:
-
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+- For purely local app work, do not set `MEAL_MIRROR_SYNC_API_BASE_URL`.
+- If you need sync in development, point `MEAL_MIRROR_SYNC_API_BASE_URL` to a local or staging backend, not production.
+- Set production sync URLs only in production release builds.

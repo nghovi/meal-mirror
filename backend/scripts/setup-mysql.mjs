@@ -36,10 +36,35 @@ await connection.query(`
 
   create table if not exists users (
     id bigint primary key auto_increment,
-    sync_key varchar(128) not null unique,
+    sync_key varchar(128) null unique,
     display_name varchar(120) not null default 'Meal Mirror User',
+    phone_number varchar(20) null unique,
+    password_hash varchar(255) null,
+    auth_provider varchar(20) not null default 'device',
     created_at timestamp default current_timestamp,
     updated_at timestamp default current_timestamp on update current_timestamp
+  );
+
+  create table if not exists user_sessions (
+    session_token varchar(64) primary key,
+    user_id bigint not null,
+    expires_at datetime not null,
+    created_at timestamp default current_timestamp,
+    index idx_user_sessions_user_id (user_id),
+    constraint fk_user_sessions_user_id
+      foreign key (user_id) references users(id)
+      on delete cascade
+  );
+
+  create table if not exists user_snapshots (
+    user_id bigint primary key,
+    snapshot_json longtext not null,
+    updated_at datetime not null,
+    created_at timestamp default current_timestamp,
+    synced_at timestamp default current_timestamp on update current_timestamp,
+    constraint fk_user_snapshots_user_id
+      foreign key (user_id) references users(id)
+      on delete cascade
   );
 
   create table if not exists devices (
@@ -152,6 +177,46 @@ await connection.query(`
     slug = values(slug),
     label = values(label)
 `);
+
+await connection.query(`
+  alter table users
+    modify column sync_key varchar(128) null
+`);
+
+async function hasColumn(tableName, columnName) {
+  const [rows] = await connection.query(
+    `select 1
+     from information_schema.columns
+     where table_schema = ?
+       and table_name = ?
+       and column_name = ?
+     limit 1`,
+    [config.database, tableName, columnName]
+  );
+  return rows.length > 0;
+}
+
+if (!(await hasColumn("users", "phone_number"))) {
+  await connection.query(`
+    alter table users
+      add column phone_number varchar(20) null after display_name,
+      add unique key uq_users_phone_number (phone_number)
+  `);
+}
+
+if (!(await hasColumn("users", "password_hash"))) {
+  await connection.query(`
+    alter table users
+      add column password_hash varchar(255) null after phone_number
+  `);
+}
+
+if (!(await hasColumn("users", "auth_provider"))) {
+  await connection.query(`
+    alter table users
+      add column auth_provider varchar(20) not null default 'device' after password_hash
+  `);
+}
 
 await connection.end();
 

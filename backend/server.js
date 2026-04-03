@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import crypto, { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import mysql from "mysql2/promise";
 
@@ -104,6 +104,26 @@ function requestBaseUrl(req) {
   return `${protocol}://${host}`;
 }
 
+function extractBearerToken(req) {
+  const authorization = req.headers.authorization || "";
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  return match ? match[1].trim() : "";
+}
+
+async function requireAuthenticatedUser(req) {
+  const token = extractBearerToken(req);
+  if (!token) {
+    throw new Error("Authentication required");
+  }
+
+  const user = await findUserBySessionToken(token);
+  if (!user) {
+    throw new Error("Session expired");
+  }
+
+  return { token, user };
+}
+
 async function callOpenAi(input) {
   if (!OPENAI_API_KEY) {
     throw new Error("OPENAI_API_KEY is missing");
@@ -158,6 +178,40 @@ function extractJsonObject(text) {
     throw new Error(`Could not find JSON object in output: ${trimmed}`);
   }
   return JSON.parse(trimmed.slice(start, end + 1));
+}
+
+function normalizePhoneNumber(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function isValidPhoneNumber(value) {
+  return /^0\d{9,10}$/.test(normalizePhoneNumber(value));
+}
+
+function isValidPassword(value) {
+  return String(value || "").trim().length >= 8;
+}
+
+function createPasswordHash(password) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const derivedKey = crypto.scryptSync(password, salt, 64).toString("hex");
+  return `scrypt:${salt}:${derivedKey}`;
+}
+
+function verifyPassword(password, hash) {
+  if (!hash || typeof hash !== "string" || !hash.startsWith("scrypt:")) {
+    return false;
+  }
+
+  const [, salt, derivedKey] = hash.split(":");
+  if (!salt || !derivedKey) {
+    return false;
+  }
+
+  const candidate = crypto.scryptSync(password, salt, 64);
+  const stored = Buffer.from(derivedKey, "hex");
+  return stored.length === candidate.length &&
+    crypto.timingSafeEqual(stored, candidate);
 }
 
 const MEAL_TYPE_IDS = {
@@ -215,8 +269,56 @@ async function writeSyncSnapshot(deviceId, snapshot) {
   }
 }
 
+async function readUserSnapshot(userId) {
+  const [rows] = await pool.query(
+    `select snapshot_json from user_snapshots where user_id = ?`,
+    [userId]
+  );
+  const row = rows[0];
+  if (!row) {
+    return null;
+  }
+  return JSON.parse(row.snapshot_json);
+}
+
+async function writeUserSnapshot(userId, snapshot) {
+  const updatedAt = new Date(snapshot.updatedAt || Date.now());
+  if (Number.isNaN(updatedAt.getTime())) {
+    throw new Error("snapshot.updatedAt must be a valid ISO timestamp");
+  }
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    await connection.query(
+      `insert into user_snapshots (user_id, snapshot_json, updated_at)
+       values (?, ?, ?)
+       on duplicate key update
+         snapshot_json = values(snapshot_json),
+         updated_at = values(updated_at)`,
+      [
+        userId,
+        JSON.stringify(snapshot),
+        updatedAt.toISOString().slice(0, 19).replace("T", " ")
+      ]
+    );
+
+    await syncNormalizedDataForUser(connection, userId, snapshot, `user:${userId}`);
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
 async function syncNormalizedData(connection, deviceId, snapshot) {
   const userId = await ensureUserAndDevice(connection, deviceId);
+  await syncNormalizedDataForUser(connection, userId, snapshot, deviceId);
+}
+
+async function syncNormalizedDataForUser(connection, userId, snapshot, deviceId) {
   await syncDietGoal(connection, userId, snapshot.dietGoal);
   await syncMeals(connection, userId, deviceId, snapshot.entries);
   await syncMiraMessages(connection, userId, snapshot.miraMessages);
@@ -251,6 +353,70 @@ async function ensureUserAndDevice(connection, deviceId) {
   );
 
   return Number(userId);
+}
+
+async function findUserByPhoneNumber(phoneNumber) {
+  const [rows] = await pool.query(
+    `select id, display_name as displayName, phone_number as phoneNumber,
+            password_hash as passwordHash, auth_provider as authProvider
+     from users
+     where phone_number = ?
+     limit 1`,
+    [phoneNumber]
+  );
+  return rows[0] ?? null;
+}
+
+async function createPhoneUser({ phoneNumber, password, displayName }) {
+  const passwordHash = createPasswordHash(password);
+  const normalizedDisplayName =
+    String(displayName || "").trim() || `Meal Mirror ${phoneNumber.slice(-4)}`;
+
+  const [result] = await pool.query(
+    `insert into users (
+       sync_key, display_name, phone_number, password_hash, auth_provider
+     )
+     values (null, ?, ?, ?, 'phone')`,
+    [normalizedDisplayName, phoneNumber, passwordHash]
+  );
+
+  return {
+    id: Number(result.insertId),
+    displayName: normalizedDisplayName,
+    phoneNumber,
+    passwordHash,
+    authProvider: "phone"
+  };
+}
+
+async function createUserSession(userId) {
+  const sessionToken = crypto.randomUUID().replaceAll("-", "");
+  await pool.query(
+    `insert into user_sessions (session_token, user_id, expires_at)
+     values (?, ?, date_add(utc_timestamp(), interval 30 day))`,
+    [sessionToken, userId]
+  );
+  return sessionToken;
+}
+
+async function findUserBySessionToken(sessionToken) {
+  const [rows] = await pool.query(
+    `select u.id, u.display_name as displayName, u.phone_number as phoneNumber
+     from user_sessions us
+     join users u on u.id = us.user_id
+     where us.session_token = ?
+       and us.expires_at > utc_timestamp()
+     limit 1`,
+    [sessionToken]
+  );
+  return rows[0] ?? null;
+}
+
+async function deleteUserSession(sessionToken) {
+  await pool.query(
+    `delete from user_sessions where session_token = ?`,
+    [sessionToken]
+  );
 }
 
 async function syncDietGoal(connection, userId, dietGoal) {
@@ -402,18 +568,21 @@ function toMysqlDateTime(value) {
   return parsed.toISOString().slice(0, 19).replace("T", " ");
 }
 
-async function storeUpload({ deviceId, fileName, mimeType, base64, req }) {
+async function storeUpload({ deviceId, userId, fileName, mimeType, base64, req }) {
   await ensureStorage();
-  const safeDeviceId = sanitizeDeviceId(deviceId);
-  if (!safeDeviceId) {
-    throw new Error("deviceId is required");
+  const safeOwnerId =
+    userId != null
+      ? `user_${sanitizeDeviceId(String(userId))}`
+      : sanitizeDeviceId(deviceId);
+  if (!safeOwnerId) {
+    throw new Error("deviceId or userId is required");
   }
 
   const ext = fileExtensionForMime(mimeType);
   const originalBase = path.basename(fileName || "meal-photo", path.extname(fileName || ""));
   const safeBase = originalBase.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 48) || "meal-photo";
   const finalName = `${Date.now()}-${randomUUID()}-${safeBase}${ext}`;
-  const relativePath = path.join(safeDeviceId, finalName);
+  const relativePath = path.join(safeOwnerId, finalName);
   const absolutePath = path.join(UPLOADS_DIR, relativePath);
 
   await fs.mkdir(path.dirname(absolutePath), { recursive: true });
@@ -444,10 +613,68 @@ async function serveUpload(req, res) {
   }
 }
 
+async function registerWithPhone(body) {
+  const phoneNumber = normalizePhoneNumber(body.phoneNumber);
+  const password = String(body.password || "");
+  const confirmPassword = String(body.confirmPassword || "");
+  const displayName = String(body.displayName || "").trim();
+
+  if (!isValidPhoneNumber(phoneNumber)) {
+    throw new Error("Please enter a valid phone number.");
+  }
+  if (!isValidPassword(password)) {
+    throw new Error("Password must be at least 8 characters.");
+  }
+  if (password !== confirmPassword) {
+    throw new Error("Password confirmation does not match.");
+  }
+
+  const existing = await findUserByPhoneNumber(phoneNumber);
+  if (existing) {
+    throw new Error("That phone number is already registered.");
+  }
+
+  const user = await createPhoneUser({
+    phoneNumber,
+    password,
+    displayName
+  });
+  const token = await createUserSession(user.id);
+  return {
+    token,
+    userId: String(user.id),
+    phoneNumber: user.phoneNumber,
+    displayName: user.displayName
+  };
+}
+
+async function loginWithPhone(body) {
+  const phoneNumber = normalizePhoneNumber(body.phoneNumber);
+  const password = String(body.password || "");
+
+  if (!isValidPhoneNumber(phoneNumber)) {
+    throw new Error("Please enter a valid phone number.");
+  }
+
+  const user = await findUserByPhoneNumber(phoneNumber);
+  if (!user || !verifyPassword(password, user.passwordHash)) {
+    throw new Error("Phone number or password is incorrect.");
+  }
+
+  const token = await createUserSession(user.id);
+  return {
+    token,
+    userId: String(user.id),
+    phoneNumber: user.phoneNumber ?? phoneNumber,
+    displayName: user.displayName ?? "Meal Mirror User"
+  };
+}
+
 async function analyzeMeal(body) {
   const images = Array.isArray(body.images) ? body.images : [];
-  if (images.length === 0) {
-    throw new Error("At least one image is required");
+  const userEditedSummary = String(body.userEditedSummary || "").trim();
+  if (images.length === 0 && !userEditedSummary) {
+    throw new Error("At least one image or a meal description is required");
   }
 
   const input = [
@@ -481,11 +708,11 @@ async function analyzeMeal(body) {
               }
             ]
           : []),
-        ...(body.userEditedSummary
+        ...(userEditedSummary
           ? [
               {
                 type: "input_text",
-                text: `User-added meal details to consider if they match the images: ${body.userEditedSummary}`
+                text: `User-added meal details to consider if they match the images: ${userEditedSummary}`
               }
             ]
           : []),
@@ -613,6 +840,102 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/auth/register") {
+    try {
+      const body = await readJson(req);
+      const result = await registerWithPhone(body);
+      sendJson(res, 200, result);
+    } catch (error) {
+      sendJson(res, 400, {
+        error: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/auth/login") {
+    try {
+      const body = await readJson(req);
+      const result = await loginWithPhone(body);
+      sendJson(res, 200, result);
+    } catch (error) {
+      sendJson(res, 400, {
+        error: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/auth/session") {
+    try {
+      const { user } = await requireAuthenticatedUser(req);
+      sendJson(res, 200, {
+        userId: String(user.id),
+        phoneNumber: user.phoneNumber ?? "",
+        displayName: user.displayName ?? "Meal Mirror User"
+      });
+    } catch (error) {
+      sendJson(res, 401, {
+        error: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/auth/logout") {
+    try {
+      const { token } = await requireAuthenticatedUser(req);
+      await deleteUserSession(token);
+      sendJson(res, 200, { ok: true });
+    } catch (error) {
+      sendJson(res, 401, {
+        error: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/app-state") {
+    try {
+      const { user } = await requireAuthenticatedUser(req);
+      const snapshot = await readUserSnapshot(user.id);
+      if (!snapshot) {
+        sendJson(res, 404, { error: "No snapshot found" });
+        return;
+      }
+      sendJson(res, 200, { snapshot });
+    } catch (error) {
+      sendJson(res, 401, {
+        error: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/app-state") {
+    try {
+      const { user } = await requireAuthenticatedUser(req);
+      const body = await readJson(req);
+      if (!body.snapshot || typeof body.snapshot !== "object") {
+        sendJson(res, 400, { error: "snapshot is required" });
+        return;
+      }
+      await writeUserSnapshot(user.id, body.snapshot);
+      sendJson(res, 200, { ok: true });
+    } catch (error) {
+      const status =
+        error instanceof Error &&
+        (error.message === "Authentication required" ||
+          error.message === "Session expired")
+          ? 401
+          : 500;
+      sendJson(res, status, {
+        error: error instanceof Error ? error.message : "Unknown error"
+      });
+    }
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/sync-state") {
     try {
       const deviceId = sanitizeDeviceId(url.searchParams.get("deviceId"));
@@ -658,8 +981,11 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && url.pathname === "/upload-image") {
     try {
       const body = await readJson(req);
+      const token = extractBearerToken(req);
+      const user = token ? await findUserBySessionToken(token) : null;
       const result = await storeUpload({
         deviceId: body.deviceId,
+        userId: user?.id,
         fileName: body.fileName,
         mimeType: body.mimeType,
         base64: body.base64,

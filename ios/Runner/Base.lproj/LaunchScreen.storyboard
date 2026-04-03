@@ -31,9 +31,9 @@
                             <constraint firstItem="pNc-Vi-zSZ" firstAttribute="centerX" secondItem="Ze5-6b-2t3" secondAttribute="centerX" id="3Z5-zR-H7t"/>
                             <constraint firstItem="YRO-k0-Ey4" firstAttribute="centerY" secondItem="Ze5-6b-2t3" secondAttribute="centerY" id="4X2-HB-R7a"/>
                             <constraint firstItem="pNc-Vi-zSZ" firstAttribute="leading" relation="greaterThanOrEqual" secondItem="Ze5-6b-2t3" secondAttribute="leading" constant="24" id="Nb4-qW-fVt"/>
-                            <constraint firstItem="YRO-k0-Ey4" firstAttribute="width" constant="152" id="O7X-jU-jq5"/>
+                            <constraint firstItem="YRO-k0-Ey4" firstAttribute="width" constant="188" id="O7X-jU-jq5"/>
                             <constraint firstAttribute="trailing" relation="greaterThanOrEqual" secondItem="pNc-Vi-zSZ" secondAttribute="trailing" constant="24" id="f5t-f6-6Ah"/>
-                            <constraint firstItem="YRO-k0-Ey4" firstAttribute="height" constant="152" id="td0-vh-0wL"/>
+                            <constraint firstItem="YRO-k0-Ey4" firstAttribute="height" constant="188" id="td0-vh-0wL"/>
                         </constraints>
                     </view>
                 </viewController>

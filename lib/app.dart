@@ -1,9 +1,37 @@
 import 'package:flutter/material.dart';
 
+import 'pages/auth_page.dart';
 import 'pages/home_page.dart';
+import 'services/auth_service.dart';
 
-class AnKiengApp extends StatelessWidget {
+class AnKiengApp extends StatefulWidget {
   const AnKiengApp({super.key});
+
+  @override
+  State<AnKiengApp> createState() => _AnKiengAppState();
+}
+
+class _AnKiengAppState extends State<AnKiengApp> {
+  final AuthService _authService = AuthService.instance;
+
+  @override
+  void initState() {
+    super.initState();
+    _authService.addListener(_handleAuthChanged);
+    _authService.loadSession();
+  }
+
+  @override
+  void dispose() {
+    _authService.removeListener(_handleAuthChanged);
+    super.dispose();
+  }
+
+  void _handleAuthChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -33,7 +61,15 @@ class AnKiengApp extends StatelessWidget {
           ),
         ),
       ),
-      home: const HomePage(),
+      home: _authService.hasLoaded
+          ? (_authService.isAuthenticated
+              ? const HomePage()
+              : AuthPage(authService: _authService))
+          : const Scaffold(
+              body: Center(
+                child: CircularProgressIndicator(),
+              ),
+            ),
     );
   }
 }

@@ -43,7 +43,8 @@ class _HomePageState extends State<HomePage> {
     }
 
     setState(() {
-      _entries = [...snapshot.entries]..sort((a, b) => b.capturedAt.compareTo(a.capturedAt));
+      _entries = [...snapshot.entries]
+        ..sort((a, b) => b.capturedAt.compareTo(a.capturedAt));
       _dietGoal = snapshot.dietGoal;
       _isLoading = false;
     });
@@ -249,7 +250,8 @@ class _HomePageState extends State<HomePage> {
       });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Could not save the diet mission right now. Please try again.'),
+          content: Text(
+              'Could not save the diet mission right now. Please try again.'),
         ),
       );
     }
@@ -305,12 +307,14 @@ class _HomePageState extends State<HomePage> {
         case ReviewPeriod.day:
           return _isSameDay(captured, reference);
         case ReviewPeriod.week:
-          final weekStart = DateTime(reference.year, reference.month, reference.day)
-              .subtract(Duration(days: reference.weekday - 1));
+          final weekStart =
+              DateTime(reference.year, reference.month, reference.day)
+                  .subtract(Duration(days: reference.weekday - 1));
           final weekEnd = weekStart.add(const Duration(days: 7));
           return !captured.isBefore(weekStart) && captured.isBefore(weekEnd);
         case ReviewPeriod.month:
-          return captured.year == reference.year && captured.month == reference.month;
+          return captured.year == reference.year &&
+              captured.month == reference.month;
         case ReviewPeriod.year:
           return captured.year == reference.year;
       }
@@ -334,7 +338,9 @@ class _HomePageState extends State<HomePage> {
     final now = DateTime.now();
     return _entries
         .where(
-          (entry) => entry.mealType == MealType.drink && _isSameDay(entry.capturedAt, now),
+          (entry) =>
+              entry.mealType == MealType.drink &&
+              _isSameDay(entry.capturedAt, now),
         )
         .fold(0, (sum, entry) => sum + entry.drinkVolumeMl);
   }
@@ -343,7 +349,9 @@ class _HomePageState extends State<HomePage> {
     final now = DateTime.now();
     final drinks = _entries
         .where(
-          (entry) => entry.mealType == MealType.drink && _isSameDay(entry.capturedAt, now),
+          (entry) =>
+              entry.mealType == MealType.drink &&
+              _isSameDay(entry.capturedAt, now),
         )
         .toList()
       ..sort((a, b) => a.capturedAt.compareTo(b.capturedAt));
@@ -360,7 +368,8 @@ class _HomePageState extends State<HomePage> {
         continue;
       }
 
-      final key = '${entry.mealType.name}|${summary.toLowerCase()}|${entry.drinkVolumeMl}';
+      final key =
+          '${entry.mealType.name}|${summary.toLowerCase()}|${entry.drinkVolumeMl}';
       if (!seen.add(key)) {
         continue;
       }
@@ -565,7 +574,8 @@ class _HomePageState extends State<HomePage> {
                             onEdit: () => _editMeal(entry),
                           );
                         },
-                        separatorBuilder: (context, index) => const SizedBox(height: 16),
+                        separatorBuilder: (context, index) =>
+                            const SizedBox(height: 16),
                         itemCount: filteredEntries.length,
                       ),
                     ),
@@ -627,11 +637,13 @@ class _OverviewCard extends StatelessWidget {
               Row(
                 children: [
                   Expanded(
-                      child: _StatChip(label: 'Total calories', value: '$totalCalories kcal'),
+                    child: _StatChip(
+                        label: 'Total calories', value: '$totalCalories kcal'),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: _StatChip(label: 'Average meal', value: '$averageCalories kcal'),
+                    child: _StatChip(
+                        label: 'Average meal', value: '$averageCalories kcal'),
                   ),
                 ],
               ),
@@ -639,13 +651,16 @@ class _OverviewCard extends StatelessWidget {
               Row(
                 children: [
                   Expanded(
-                    child: _StatChip(label: 'Meals logged', value: '$entryCount'),
+                    child:
+                        _StatChip(label: 'Meals logged', value: '$entryCount'),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: _StatChip(
                       label: 'Drinks today',
-                      value: todayDrinkVolumeMl > 0 ? '$todayDrinkVolumeMl mL' : '0 mL',
+                      value: todayDrinkVolumeMl > 0
+                          ? '$todayDrinkVolumeMl mL'
+                          : '0 mL',
                       onTap: onTapDrinksToday,
                     ),
                   ),
@@ -763,7 +778,8 @@ class _QuickCaptureCard extends StatelessWidget {
 
   String _quickCaptureLabel(MealEntry entry) {
     final summary = entry.displaySummary.trim();
-    final compactSummary = summary.length > 28 ? '${summary.substring(0, 28)}...' : summary;
+    final compactSummary =
+        summary.length > 28 ? '${summary.substring(0, 28)}...' : summary;
     if (entry.mealType == MealType.drink && entry.drinkVolumeMl > 0) {
       return '$compactSummary • ${entry.drinkVolumeMl} mL';
     }
@@ -823,7 +839,8 @@ class _DietGoalCard extends StatelessWidget {
             ] else if (hasGoal && goal!.aiBrief.isNotEmpty) ...[
               const SizedBox(height: 12),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 decoration: BoxDecoration(
                   color: const Color(0xFFF8F2EB),
                   borderRadius: BorderRadius.circular(16),
@@ -1014,7 +1031,9 @@ class _StatChip extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  Expanded(child: Text(label, style: const TextStyle(color: Colors.white70))),
+                  Expanded(
+                      child: Text(label,
+                          style: const TextStyle(color: Colors.white70))),
                   if (onTap != null)
                     const Icon(
                       Icons.chevron_right_rounded,
@@ -1101,8 +1120,10 @@ class _TodayDrinksSheet extends StatelessWidget {
                 )
               : LayoutBuilder(
                   builder: (context, constraints) {
-                    final metrics = _DrinkTimelineMetrics.forCount(drinks.length);
-                    final horizontalInset = (constraints.maxWidth - metrics.rowWidth) / 2;
+                    final metrics =
+                        _DrinkTimelineMetrics.forCount(drinks.length);
+                    final horizontalInset =
+                        (constraints.maxWidth - metrics.rowWidth) / 2;
                     final lineLeft = horizontalInset +
                         metrics.labelWidth +
                         metrics.gap +
@@ -1213,10 +1234,12 @@ class _TodayDrinksSheet extends StatelessWidget {
         topInset + bottomInset + ((drinks.length - 1) * minCenterGap);
     final firstTime = drinks.first.capturedAt;
     final lastTime = drinks.last.capturedAt;
-    final totalMinutes = math.max(
-      1,
-      lastTime.difference(firstTime).inMinutes,
-    ).toDouble();
+    final totalMinutes = math
+        .max(
+          1,
+          lastTime.difference(firstTime).inMinutes,
+        )
+        .toDouble();
     final desiredContentHeight = topInset + bottomInset + (totalMinutes * 0.22);
     final contentHeight = math.min(
       availableHeight,
@@ -1226,7 +1249,8 @@ class _TodayDrinksSheet extends StatelessWidget {
 
     final centers = <double>[];
     for (var index = 0; index < drinks.length; index++) {
-      final offsetMinutes = drinks[index].capturedAt.difference(firstTime).inMinutes.toDouble();
+      final offsetMinutes =
+          drinks[index].capturedAt.difference(firstTime).inMinutes.toDouble();
       final ratio = offsetMinutes / totalMinutes;
       centers.add(topInset + (ratio * usableSpan));
     }
@@ -1342,7 +1366,9 @@ class _DrinkTimelineNode extends StatelessWidget {
     if (text.contains('water')) {
       return Icons.local_drink_outlined;
     }
-    if (text.contains('coffee') || text.contains('espresso') || text.contains('latte')) {
+    if (text.contains('coffee') ||
+        text.contains('espresso') ||
+        text.contains('latte')) {
       return Icons.coffee_outlined;
     }
     if (text.contains('tea') || text.contains('matcha')) {
@@ -1365,7 +1391,9 @@ class _DrinkTimelineNode extends StatelessWidget {
     if (text.contains('water')) {
       return const Color(0xFF4BA3C7);
     }
-    if (text.contains('coffee') || text.contains('espresso') || text.contains('latte')) {
+    if (text.contains('coffee') ||
+        text.contains('espresso') ||
+        text.contains('latte')) {
       return const Color(0xFF8A5A3C);
     }
     if (text.contains('tea') || text.contains('matcha')) {
@@ -1659,7 +1687,8 @@ class _EmptyTimelineGuide extends StatelessWidget {
             ),
             const _GuideRow(
               icon: Icons.edit_outlined,
-              text: 'Keep your own edits even if you change images and re-run analysis later.',
+              text:
+                  'Keep your own edits even if you change images and re-run analysis later.',
             ),
             const SizedBox(height: 18),
             FilledButton.icon(
@@ -1749,7 +1778,8 @@ class _MealCard extends StatelessWidget {
                   icon: const Icon(Icons.edit_outlined),
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                   decoration: BoxDecoration(
                     color: const Color(0xFFF5E5D8),
                     borderRadius: BorderRadius.circular(999),
@@ -1773,26 +1803,12 @@ class _MealCard extends StatelessWidget {
                       onTap: () => _showImageGallery(context, index),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(18),
-                        child: Image.file(
-                          MealRepository.fileFromStoredPath(path),
-                          width: 140,
-                          cacheWidth: 420,
-                          cacheHeight: 360,
-                          filterQuality: FilterQuality.low,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) {
-                            return Container(
-                              width: 140,
-                              color: const Color(0xFFF1E7DE),
-                              alignment: Alignment.center,
-                              child: const Text('Image unavailable'),
-                            );
-                          },
-                        ),
+                        child: _MealThumbnail(path: path),
                       ),
                     );
                   },
-                  separatorBuilder: (context, index) => const SizedBox(width: 10),
+                  separatorBuilder: (context, index) =>
+                      const SizedBox(width: 10),
                   itemCount: entry.imagePaths.length,
                 ),
               ),
@@ -1813,7 +1829,8 @@ class _MealCard extends StatelessWidget {
                 spacing: 8,
                 runSpacing: 8,
                 children: [
-                  if (entry.mealType == MealType.drink && entry.drinkVolumeMl > 0)
+                  if (entry.mealType == MealType.drink &&
+                      entry.drinkVolumeMl > 0)
                     _InfoChip(label: '${entry.drinkVolumeMl} mL'),
                   if (entry.isSharedMeal)
                     _InfoChip(
@@ -1964,8 +1981,8 @@ class _MealImageGalleryState extends State<_MealImageGallery> {
                   minScale: 1,
                   maxScale: 4,
                   child: Center(
-                    child: Image.file(
-                      MealRepository.fileFromStoredPath(path),
+                    child: _MealImageView(
+                      path: path,
                       fit: BoxFit.contain,
                       errorBuilder: (context, error, stackTrace) {
                         return const Text(
@@ -1994,7 +2011,8 @@ class _MealImageGalleryState extends State<_MealImageGallery> {
               top: 20,
               right: 20,
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
                   color: Colors.white12,
                   borderRadius: BorderRadius.circular(999),
@@ -2112,7 +2130,8 @@ class _DietGoalEditorSheetState extends State<_DietGoalEditorSheet> {
           SizedBox(
             width: double.infinity,
             child: FilledButton(
-              onPressed: () => Navigator.of(context).pop(_controller.text.trim()),
+              onPressed: () =>
+                  Navigator.of(context).pop(_controller.text.trim()),
               child: const Text('Save mission'),
             ),
           ),
@@ -2156,9 +2175,11 @@ class _MealEditorSheetState extends State<_MealEditorSheet> {
   late final _MealEditorSeed? _seed = widget.seed;
   late DateTime _capturedAt =
       widget.existing?.capturedAt ?? _seed?.capturedAt ?? DateTime.now();
-  late MealType _mealType =
-      widget.existing?.mealType ?? _seed?.mealType ?? _defaultMealTypeFor(_capturedAt);
-  late int _feelingRating = widget.existing?.feelingRating ?? _seed?.feelingRating ?? 3;
+  late MealType _mealType = widget.existing?.mealType ??
+      _seed?.mealType ??
+      _defaultMealTypeFor(_capturedAt);
+  late int _feelingRating =
+      widget.existing?.feelingRating ?? _seed?.feelingRating ?? 3;
   late List<_MealImageSource> _imageSources = [
     for (final path in widget.existing?.imagePaths ?? const <String>[])
       _ExistingImageSource(path),
@@ -2175,9 +2196,11 @@ class _MealEditorSheetState extends State<_MealEditorSheet> {
   bool _isAnalyzing = false;
   bool _suppressControllerListeners = false;
   bool _didAutoPickImage = false;
-  late final DateTime _initialCapturedAt = widget.existing?.capturedAt ?? _capturedAt;
+  late final DateTime _initialCapturedAt =
+      widget.existing?.capturedAt ?? _capturedAt;
   late final MealType _initialMealType = widget.existing?.mealType ?? _mealType;
-  late final int _initialFeelingRating = widget.existing?.feelingRating ?? _feelingRating;
+  late final int _initialFeelingRating =
+      widget.existing?.feelingRating ?? _feelingRating;
   late final int _initialDrinkVolumeMl =
       widget.existing?.drinkVolumeMl ?? _seed?.drinkVolumeMl ?? 0;
   late final bool _initialIsSharedMeal = widget.existing?.isSharedMeal ?? false;
@@ -2196,8 +2219,8 @@ class _MealEditorSheetState extends State<_MealEditorSheet> {
       widget.existing?.feelingNote.isNotEmpty == true
           ? widget.existing!.feelingNote.trim()
           : (_seed?.feelingNote.trim().isNotEmpty == true
-                ? _seed!.feelingNote.trim()
-                : _feelingLabel(_initialFeelingRating).trim());
+              ? _seed!.feelingNote.trim()
+              : _feelingLabel(_initialFeelingRating).trim());
 
   @override
   void initState() {
@@ -2216,35 +2239,39 @@ class _MealEditorSheetState extends State<_MealEditorSheet> {
       text: widget.existing?.feelingNote.isNotEmpty == true
           ? widget.existing!.feelingNote
           : (_seed?.feelingNote.isNotEmpty == true
-                ? _seed!.feelingNote
-                : _feelingLabel(_feelingRating)),
+              ? _seed!.feelingNote
+              : _feelingLabel(_feelingRating)),
     );
     _drinkVolumeController = TextEditingController(
       text: (widget.existing?.drinkVolumeMl ?? 0) > 0
           ? '${widget.existing!.drinkVolumeMl}'
           : (_seed?.drinkVolumeMl ?? 0) > 0
               ? '${_seed!.drinkVolumeMl}'
-          : '',
+              : '',
     );
     _peopleCountController = TextEditingController(
       text: '${widget.existing?.sharedMealPeopleCount ?? 2}',
     );
 
-    _summaryWasEdited =
-        widget.existing?.isSummaryOverridden ?? ((_seed?.summary.trim().isNotEmpty ?? false));
+    _summaryWasEdited = widget.existing?.isSummaryOverridden ??
+        ((_seed?.summary.trim().isNotEmpty ?? false));
 
     _summaryController.addListener(() {
       if (_suppressControllerListeners) {
         return;
       }
-      _summaryWasEdited = _summaryController.text.trim() != _aiSuggestedSummary.trim();
+      _summaryWasEdited =
+          _summaryController.text.trim() != _aiSuggestedSummary.trim();
       if (mounted) {
         setState(() {});
       }
     });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _isEditing || _didAutoPickImage || widget.autoPickSource == null) {
+      if (!mounted ||
+          _isEditing ||
+          _didAutoPickImage ||
+          widget.autoPickSource == null) {
         return;
       }
       _didAutoPickImage = true;
@@ -2263,7 +2290,8 @@ class _MealEditorSheetState extends State<_MealEditorSheet> {
 
   Future<void> _addImage(ImageSource source) async {
     if (_remainingImageSlots <= 0) {
-      _showEditorSnackBar('You can add up to $_maxImagesPerMeal photos per meal.');
+      _showEditorSnackBar(
+          'You can add up to $_maxImagesPerMeal photos per meal.');
       return;
     }
 
@@ -2501,7 +2529,8 @@ class _MealEditorSheetState extends State<_MealEditorSheet> {
     if (summary.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Add a meal description or wait for Mira to finish the estimate.'),
+          content: Text(
+              'Add a meal description or wait for Mira to finish the estimate.'),
         ),
       );
       return;
@@ -2510,7 +2539,8 @@ class _MealEditorSheetState extends State<_MealEditorSheet> {
     if (_mealType == MealType.drink && drinkVolumeMl <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Add the drink volume in mL so hydration can be tracked.'),
+          content:
+              Text('Add the drink volume in mL so hydration can be tracked.'),
         ),
       );
       return;
@@ -2524,7 +2554,8 @@ class _MealEditorSheetState extends State<_MealEditorSheet> {
         feelingNote: _feelingController.text.trim(),
         drinkVolumeMl: drinkVolumeMl,
         imageSources: _imageSources,
-        aiSuggestedSummary: _aiSuggestedSummary.isEmpty ? summary : _aiSuggestedSummary,
+        aiSuggestedSummary:
+            _aiSuggestedSummary.isEmpty ? summary : _aiSuggestedSummary,
         aiSuggestedCalories:
             _aiSuggestedCalories == 0 ? calories : _aiSuggestedCalories,
         aiReview: _aiReview,
@@ -2555,7 +2586,8 @@ class _MealEditorSheetState extends State<_MealEditorSheet> {
     return _capturedAt != _initialCapturedAt ||
         _mealType != _initialMealType ||
         _feelingRating != _initialFeelingRating ||
-        (int.tryParse(_drinkVolumeController.text.trim()) ?? 0) != _initialDrinkVolumeMl ||
+        (int.tryParse(_drinkVolumeController.text.trim()) ?? 0) !=
+            _initialDrinkVolumeMl ||
         _isSharedMeal != _initialIsSharedMeal ||
         _sharedMealPeopleCount != _initialSharedMealPeopleCount ||
         _userPortionPercent != _initialUserPortionPercent ||
@@ -2612,7 +2644,9 @@ class _MealEditorSheetState extends State<_MealEditorSheet> {
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
     final canEstimateFromCurrentInput =
-        _summaryController.text.trim().isNotEmpty && !_isAnalyzing && _summaryWasEdited;
+        _summaryController.text.trim().isNotEmpty &&
+            !_isAnalyzing &&
+            _summaryWasEdited;
     final estimationStatusText = _imageSources.isNotEmpty
         ? 'Analyzing meal details...'
         : 'Estimating calories...';
@@ -2633,468 +2667,496 @@ class _MealEditorSheetState extends State<_MealEditorSheet> {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-            Row(
-              children: [
-                IconButton(
-                  onPressed: _attemptDismiss,
-                  icon: const Icon(Icons.arrow_back_ios_new_rounded),
-                  tooltip: 'Back',
-                ),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: Text(
-                    _isEditing ? 'Edit meal' : 'Log a meal',
-                    style: Theme.of(context).textTheme.headlineSmall,
+              Row(
+                children: [
+                  IconButton(
+                    onPressed: _attemptDismiss,
+                    icon: const Icon(Icons.arrow_back_ios_new_rounded),
+                    tooltip: 'Back',
                   ),
-                ),
-                TextButton(
-                  onPressed: _attemptDismiss,
-                  child: const Text('Close'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              _mealType == MealType.drink
-                  ? 'Add a drink photo or log it manually.'
-                  : 'Add a meal photo or log it manually.',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: const Color(0xFF6E6257),
-                  ),
-            ),
-            const SizedBox(height: 20),
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                FilledButton.icon(
-                  onPressed:
-                      _isAnalyzing || _remainingImageSlots <= 0
-                          ? null
-                          : () => _addImage(ImageSource.camera),
-                  icon: const Icon(Icons.camera_alt_outlined),
-                  label: const Text('Camera'),
-                ),
-                OutlinedButton.icon(
-                  onPressed:
-                      _isAnalyzing || _remainingImageSlots <= 0
-                          ? null
-                          : () => _addImage(ImageSource.gallery),
-                  icon: const Icon(Icons.photo_library_outlined),
-                  label: const Text('Gallery'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '${_imageSources.length}/$_maxImagesPerMeal photos',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: const Color(0xFF8A7468),
-                  ),
-            ),
-            if (!_isEditing && widget.recentEntries.isNotEmpty) ...[
-              const SizedBox(height: 14),
-              Text(
-                _mealType == MealType.drink ? 'Recent drinks' : 'Recent meals',
-                style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                      color: const Color(0xFF7A5A45),
-                      fontWeight: FontWeight.w700,
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      _isEditing ? 'Edit meal' : 'Log a meal',
+                      style: Theme.of(context).textTheme.headlineSmall,
                     ),
+                  ),
+                  TextButton(
+                    onPressed: _attemptDismiss,
+                    child: const Text('Close'),
+                  ),
+                ],
               ),
               const SizedBox(height: 8),
+              Text(
+                _mealType == MealType.drink
+                    ? 'Add a drink photo or log it manually.'
+                    : 'Add a meal photo or log it manually.',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: const Color(0xFF6E6257),
+                    ),
+              ),
+              const SizedBox(height: 20),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  FilledButton.icon(
+                    onPressed: _isAnalyzing || _remainingImageSlots <= 0
+                        ? null
+                        : () => _addImage(ImageSource.camera),
+                    icon: const Icon(Icons.camera_alt_outlined),
+                    label: const Text('Camera'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: _isAnalyzing || _remainingImageSlots <= 0
+                        ? null
+                        : () => _addImage(ImageSource.gallery),
+                    icon: const Icon(Icons.photo_library_outlined),
+                    label: const Text('Gallery'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '${_imageSources.length}/$_maxImagesPerMeal photos',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: const Color(0xFF8A7468),
+                    ),
+              ),
+              if (!_isEditing && widget.recentEntries.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                Text(
+                  _mealType == MealType.drink
+                      ? 'Recent drinks'
+                      : 'Recent meals',
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        color: const Color(0xFF7A5A45),
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final entry in widget.recentEntries.where(
+                      (entry) => entry.mealType == _mealType,
+                    ))
+                      ActionChip(
+                        onPressed: _isAnalyzing
+                            ? null
+                            : () => _applyRecentEntry(entry),
+                        label: Text(_quickEntryLabel(entry)),
+                      ),
+                  ],
+                ),
+              ],
+              if (_imageSources.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                SizedBox(
+                  height: 120,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemBuilder: (context, index) {
+                      final image = _imageSources[index];
+                      return Stack(
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(18),
+                            child: image.buildPreview(),
+                          ),
+                          Positioned(
+                            top: 6,
+                            right: 6,
+                            child: GestureDetector(
+                              onTap: () => _removeImage(index),
+                              child: Container(
+                                padding: const EdgeInsets.all(6),
+                                decoration: const BoxDecoration(
+                                  color: Colors.black54,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.close,
+                                  size: 16,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                    separatorBuilder: (context, index) =>
+                        const SizedBox(width: 10),
+                    itemCount: _imageSources.length,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 18),
+              OutlinedButton.icon(
+                onPressed: _isAnalyzing ? null : _pickMealTime,
+                icon: const Icon(Icons.schedule),
+                label: Text('Meal time: ${_formatMealTime(_capturedAt)}'),
+              ),
+              const SizedBox(height: 14),
+              _EditorSectionLabel(
+                label: 'Meal type',
+                hint: 'Pick the moment that fits this log best.',
+              ),
+              const SizedBox(height: 14),
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
                 children: [
-                  for (final entry in widget.recentEntries.where(
-                    (entry) => entry.mealType == _mealType,
-                  ))
-                    ActionChip(
-                      onPressed: _isAnalyzing ? null : () => _applyRecentEntry(entry),
-                      label: Text(_quickEntryLabel(entry)),
+                  for (final type in MealType.values)
+                    _MealTypeChip(
+                      label: type.label,
+                      icon: switch (type) {
+                        MealType.breakfast => Icons.wb_sunny_outlined,
+                        MealType.lunch => Icons.ramen_dining_outlined,
+                        MealType.dinner => Icons.nightlight_round,
+                        MealType.snack => Icons.cookie_outlined,
+                        MealType.drink => Icons.local_drink_outlined,
+                      },
+                      selected: _mealType == type,
+                      onTap: _isAnalyzing
+                          ? null
+                          : () {
+                              setState(() {
+                                _mealType = type;
+                              });
+                            },
                     ),
                 ],
               ),
-            ],
-            if (_imageSources.isNotEmpty) ...[
-              const SizedBox(height: 14),
-              SizedBox(
-                height: 120,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  itemBuilder: (context, index) {
-                    final image = _imageSources[index];
-                    return Stack(
-                      children: [
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(18),
-                          child: image.buildPreview(),
-                        ),
-                        Positioned(
-                          top: 6,
-                          right: 6,
-                          child: GestureDetector(
-                            onTap: () => _removeImage(index),
-                            child: Container(
-                              padding: const EdgeInsets.all(6),
-                              decoration: const BoxDecoration(
-                                color: Colors.black54,
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(
-                                Icons.close,
-                                size: 16,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    );
-                  },
-                  separatorBuilder: (context, index) => const SizedBox(width: 10),
-                  itemCount: _imageSources.length,
-                ),
+              const SizedBox(height: 16),
+              _EditorSectionLabel(
+                label: _mealType == MealType.drink
+                    ? 'What did you drink?'
+                    : 'What did you eat?',
+                hint:
+                    'Mira can suggest this for you, but you can shape it in your own words.',
               ),
-            ],
-            const SizedBox(height: 18),
-            OutlinedButton.icon(
-              onPressed: _isAnalyzing ? null : _pickMealTime,
-              icon: const Icon(Icons.schedule),
-              label: Text('Meal time: ${_formatMealTime(_capturedAt)}'),
-            ),
-            const SizedBox(height: 14),
-            _EditorSectionLabel(
-              label: 'Meal type',
-              hint: 'Pick the moment that fits this log best.',
-            ),
-            const SizedBox(height: 14),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final type in MealType.values)
-                  _MealTypeChip(
-                    label: type.label,
-                    icon: switch (type) {
-                      MealType.breakfast => Icons.wb_sunny_outlined,
-                      MealType.lunch => Icons.ramen_dining_outlined,
-                      MealType.dinner => Icons.nightlight_round,
-                      MealType.snack => Icons.cookie_outlined,
-                      MealType.drink => Icons.local_drink_outlined,
-                    },
-                    selected: _mealType == type,
-                    onTap: _isAnalyzing
-                        ? null
-                        : () {
-                            setState(() {
-                              _mealType = type;
-                            });
-                          },
-                  ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            _EditorSectionLabel(
-              label: _mealType == MealType.drink ? 'What did you drink?' : 'What did you eat?',
-              hint: 'Mira can suggest this for you, but you can shape it in your own words.',
-            ),
-            const SizedBox(height: 10),
-            _StyledEditorField(
-              controller: _summaryController,
-              keyboardType: TextInputType.multiline,
-              minLines: 4,
-              maxLines: null,
-              hintText: _mealType == MealType.drink
-                  ? 'Cold water, half-full glass, after lunch...'
-                  : 'Rice, grilled chicken, greens, small soup...'
-            ),
-            if (_mealType != MealType.drink) ...[
-              const SizedBox(height: 14),
-              SwitchListTile.adaptive(
-                value: _isSharedMeal,
-                onChanged: _isAnalyzing
-                    ? null
-                    : (value) {
-                        setState(() {
-                          _isSharedMeal = value;
-                          if (!_isSharedMeal) {
-                            _peopleCountController.text = '1';
-                            _userPortionPercent = 100;
-                            _userPortionWasEdited = false;
-                          } else if (_peopleCountController.text.trim().isEmpty ||
-                              _peopleCountController.text.trim() == '1') {
-                            _peopleCountController.text = '2';
-                            _syncUserPortionWithPeopleCount();
-                          } else {
-                            _syncUserPortionWithPeopleCount();
-                          }
-                        });
-                      },
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Shared meal'),
-                subtitle: const Text(
-                  'Turn this on if the photo shows dishes for multiple people.',
-                ),
-              ),
-              if (_isSharedMeal) ...[
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _peopleCountController,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'People sharing the meal',
-                    hintText: 'Example: 4',
-                  ),
-                  onChanged: (_) {
-                    if (_userPortionWasEdited) {
-                      setState(() {});
-                      return;
-                    }
-                    setState(() {
-                      _syncUserPortionWithPeopleCount();
-                    });
-                  },
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  'How much did you personally eat?',
-                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                        color: const Color(0xFF7A5A45),
-                      ),
-                ),
-                Slider(
-                  value: _userPortionPercent.toDouble(),
-                  min: 10,
-                  max: 100,
-                  divisions: 18,
-                  label: '$_userPortionPercent%',
+              const SizedBox(height: 10),
+              _StyledEditorField(
+                  controller: _summaryController,
+                  keyboardType: TextInputType.multiline,
+                  minLines: 4,
+                  maxLines: null,
+                  hintText: _mealType == MealType.drink
+                      ? 'Cold water, half-full glass, after lunch...'
+                      : 'Rice, grilled chicken, greens, small soup...'),
+              if (_mealType != MealType.drink) ...[
+                const SizedBox(height: 14),
+                SwitchListTile.adaptive(
+                  value: _isSharedMeal,
                   onChanged: _isAnalyzing
                       ? null
                       : (value) {
                           setState(() {
-                            _userPortionPercent = value.round();
-                            _userPortionWasEdited = true;
+                            _isSharedMeal = value;
+                            if (!_isSharedMeal) {
+                              _peopleCountController.text = '1';
+                              _userPortionPercent = 100;
+                              _userPortionWasEdited = false;
+                            } else if (_peopleCountController.text
+                                    .trim()
+                                    .isEmpty ||
+                                _peopleCountController.text.trim() == '1') {
+                              _peopleCountController.text = '2';
+                              _syncUserPortionWithPeopleCount();
+                            } else {
+                              _syncUserPortionWithPeopleCount();
+                            }
                           });
                         },
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Shared meal'),
+                  subtitle: const Text(
+                    'Turn this on if the photo shows dishes for multiple people.',
+                  ),
                 ),
-                Text(
-                  _portionLabel,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: const Color(0xFF6E6257),
+                if (_isSharedMeal) ...[
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _peopleCountController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'People sharing the meal',
+                      hintText: 'Example: 4',
+                    ),
+                    onChanged: (_) {
+                      if (_userPortionWasEdited) {
+                        setState(() {});
+                        return;
+                      }
+                      setState(() {
+                        _syncUserPortionWithPeopleCount();
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    'How much did you personally eat?',
+                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          color: const Color(0xFF7A5A45),
+                        ),
+                  ),
+                  Slider(
+                    value: _userPortionPercent.toDouble(),
+                    min: 10,
+                    max: 100,
+                    divisions: 18,
+                    label: '$_userPortionPercent%',
+                    onChanged: _isAnalyzing
+                        ? null
+                        : (value) {
+                            setState(() {
+                              _userPortionPercent = value.round();
+                              _userPortionWasEdited = true;
+                            });
+                          },
+                  ),
+                  Text(
+                    _portionLabel,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: const Color(0xFF6E6257),
+                        ),
+                  ),
+                ],
+              ],
+              if (_mealType == MealType.drink) ...[
+                const SizedBox(height: 14),
+                TextField(
+                  controller: _drinkVolumeController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Drink volume (mL)',
+                    hintText: 'Example: 350',
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final amount in const [50, 100, 150, 200, 250])
+                      ChoiceChip(
+                        label: Text('$amount mL'),
+                        selected:
+                            _drinkVolumeController.text.trim() == '$amount',
+                        onSelected: (_) {
+                          setState(() {
+                            _drinkVolumeController.text = '$amount';
+                          });
+                        },
                       ),
+                  ],
                 ),
               ],
-            ],
-            if (_mealType == MealType.drink) ...[
               const SizedBox(height: 14),
-              TextField(
-                controller: _drinkVolumeController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Drink volume (mL)',
-                  hintText: 'Example: 350',
-                ),
-              ),
-              const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final amount in const [50, 100, 150, 200, 250])
-                    ChoiceChip(
-                      label: Text('$amount mL'),
-                      selected: _drinkVolumeController.text.trim() == '$amount',
-                      onSelected: (_) {
-                        setState(() {
-                          _drinkVolumeController.text = '$amount';
-                        });
-                      },
-                    ),
-                ],
-              ),
-            ],
-            const SizedBox(height: 14),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFAF6F1),
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: const Color(0xFFEEE3D7)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'Estimated calories',
-                          style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                                color: const Color(0xFF7A5A45),
-                              ),
-                        ),
-                      ),
-                      if (_isAnalyzing)
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFF2E8DD),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                _imageSources.isNotEmpty
-                                    ? 'Updating...'
-                                    : 'Estimating...',
-                                style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                                      color: const Color(0xFF8E6F5C),
-                                    ),
-                              ),
-                            ],
-                          ),
-                        )
-                      else if (canEstimateFromCurrentInput)
-                        InkWell(
-                          onTap: _estimateFromSummary,
-                          borderRadius: BorderRadius.circular(999),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.auto_awesome_outlined,
-                                  size: 14,
-                                  color: _isAnalyzing
-                                      ? const Color(0xFFB9ADA2)
-                                      : const Color(0xFF8E6F5C),
-                                ),
-                                const SizedBox(width: 4),
-                                Text(
-                                  'Estimate',
-                                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                                        color: _isAnalyzing
-                                            ? const Color(0xFFB9ADA2)
-                                            : const Color(0xFF8E6F5C),
-                                      ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  if (_isAnalyzing)
-                    Text(
-                      estimationStatusText,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: const Color(0xFF7A5A45),
-                          ),
-                    )
-                  else
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _aiSuggestedCalories > 0
-                              ? '$displayedCalories kcal'
-                              : _imageSources.isNotEmpty
-                                  ? 'Waiting for Mira'
-                                  : 'No estimate yet',
-                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.w600,
-                                color: const Color(0xFF5F4C40),
-                              ),
-                        ),
-                        if (_aiSuggestedCalories > 0 && _isSharedMeal) ...[
-                          const SizedBox(height: 6),
-                          Text(
-                            'Whole table: $_aiSuggestedCalories kcal • Your share: $displayedCalories kcal',
-                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                  color: const Color(0xFF7A5A45),
-                                ),
-                          ),
-                        ],
-                      ],
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 18),
-            if (_debugLastAiResult.isNotEmpty) ...[
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(12),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF3F7FB),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: const Color(0xFFD6E2EE)),
+                  color: const Color(0xFFFAF6F1),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: const Color(0xFFEEE3D7)),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Mira debug',
-                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                            fontWeight: FontWeight.w700,
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Estimated calories',
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelLarge
+                                ?.copyWith(
+                                  color: const Color(0xFF7A5A45),
+                                ),
                           ),
+                        ),
+                        if (_isAnalyzing)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF2E8DD),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  _imageSources.isNotEmpty
+                                      ? 'Updating...'
+                                      : 'Estimating...',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .labelMedium
+                                      ?.copyWith(
+                                        color: const Color(0xFF8E6F5C),
+                                      ),
+                                ),
+                              ],
+                            ),
+                          )
+                        else if (canEstimateFromCurrentInput)
+                          InkWell(
+                            onTap: _estimateFromSummary,
+                            borderRadius: BorderRadius.circular(999),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.auto_awesome_outlined,
+                                    size: 14,
+                                    color: _isAnalyzing
+                                        ? const Color(0xFFB9ADA2)
+                                        : const Color(0xFF8E6F5C),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    'Estimate',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelMedium
+                                        ?.copyWith(
+                                          color: _isAnalyzing
+                                              ? const Color(0xFFB9ADA2)
+                                              : const Color(0xFF8E6F5C),
+                                        ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
-                    const SizedBox(height: 6),
-                    Text(
-                      _debugLastAiResult,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
+                    const SizedBox(height: 8),
+                    if (_isAnalyzing)
+                      Text(
+                        estimationStatusText,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              color: const Color(0xFF7A5A45),
+                            ),
+                      )
+                    else
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _aiSuggestedCalories > 0
+                                ? '$displayedCalories kcal'
+                                : _imageSources.isNotEmpty
+                                    ? 'Waiting for Mira'
+                                    : 'No estimate yet',
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleMedium
+                                ?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                  color: const Color(0xFF5F4C40),
+                                ),
+                          ),
+                          if (_aiSuggestedCalories > 0 && _isSharedMeal) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              'Whole table: $_aiSuggestedCalories kcal • Your share: $displayedCalories kcal',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(
+                                    color: const Color(0xFF7A5A45),
+                                  ),
+                            ),
+                          ],
+                        ],
+                      ),
                   ],
                 ),
               ),
               const SizedBox(height: 18),
-            ],
-            Text(
-              'How did you feel?',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
+              if (_debugLastAiResult.isNotEmpty) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF3F7FB),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: const Color(0xFFD6E2EE)),
                   ),
-            ),
-            const SizedBox(height: 8),
-            _StarRatingInput(
-              rating: _feelingRating,
-              onChanged: (rating) {
-                setState(() {
-                  _feelingRating = rating;
-                  if (_feelingController.text.trim().isEmpty ||
-                      _feelingController.text.trim() == _feelingLabel(_feelingRating)) {
-                    _feelingController.text = _feelingLabel(rating);
-                  }
-                });
-              },
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _feelingController,
-              decoration: const InputDecoration(
-                labelText: 'Feeling note',
-                hintText: 'Example: Too full, satisfied, light, sleepy',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Mira debug',
+                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _debugLastAiResult,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 18),
+              ],
+              Text(
+                'How did you feel?',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
               ),
-            ),
-            const SizedBox(height: 20),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: _isAnalyzing ? null : _save,
-                child: Text(_isEditing ? 'Save changes' : 'Save meal'),
+              const SizedBox(height: 8),
+              _StarRatingInput(
+                rating: _feelingRating,
+                onChanged: (rating) {
+                  setState(() {
+                    _feelingRating = rating;
+                    if (_feelingController.text.trim().isEmpty ||
+                        _feelingController.text.trim() ==
+                            _feelingLabel(_feelingRating)) {
+                      _feelingController.text = _feelingLabel(rating);
+                    }
+                  });
+                },
               ),
-            ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _feelingController,
+                decoration: const InputDecoration(
+                  labelText: 'Feeling note',
+                  hintText: 'Example: Too full, satisfied, light, sleepy',
+                ),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: _isAnalyzing ? null : _save,
+                  child: Text(_isEditing ? 'Save changes' : 'Save meal'),
+                ),
+              ),
             ],
           ),
         ),
@@ -3209,7 +3271,8 @@ class _MealEditorSheetState extends State<_MealEditorSheet> {
       return;
     }
 
-    if (_mealType == MealType.drink && suggestion.estimatedDrinkVolumeMl == null) {
+    if (_mealType == MealType.drink &&
+        suggestion.estimatedDrinkVolumeMl == null) {
       return;
     }
 
@@ -3228,7 +3291,8 @@ class _MealEditorSheetState extends State<_MealEditorSheet> {
         'Detected type: ${suggestion.detectedMealType!.label}',
       if ((suggestion.estimatedDrinkVolumeMl ?? 0) > 0)
         'Estimated drink volume: ${suggestion.estimatedDrinkVolumeMl} mL',
-      if (_isSharedMeal) 'Your portion: $_displayedCalories kcal ($_userPortionPercent%)',
+      if (_isSharedMeal)
+        'Your portion: $_displayedCalories kcal ($_userPortionPercent%)',
     ];
 
     if (usage != null) {
@@ -3307,6 +3371,88 @@ sealed class _MealImageSource {
   XFile asXFile();
 }
 
+class _MealImageView extends StatelessWidget {
+  const _MealImageView({
+    required this.path,
+    this.fit = BoxFit.contain,
+    this.cacheWidth,
+    this.cacheHeight,
+    this.filterQuality = FilterQuality.low,
+    this.errorBuilder,
+  });
+
+  final String path;
+  final BoxFit fit;
+  final int? cacheWidth;
+  final int? cacheHeight;
+  final FilterQuality filterQuality;
+  final ImageErrorWidgetBuilder? errorBuilder;
+
+  bool get _isRemotePath =>
+      path.startsWith('http://') || path.startsWith('https://');
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isRemotePath) {
+      return Image.network(
+        path,
+        fit: fit,
+        filterQuality: filterQuality,
+        errorBuilder: errorBuilder,
+      );
+    }
+
+    return Image.file(
+      MealRepository.fileFromStoredPath(path),
+      cacheWidth: cacheWidth,
+      cacheHeight: cacheHeight,
+      filterQuality: filterQuality,
+      fit: fit,
+      errorBuilder: errorBuilder,
+    );
+  }
+}
+
+class _MealThumbnail extends StatelessWidget {
+  const _MealThumbnail({required this.path});
+
+  final String path;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 96,
+      height: 120,
+      child: Container(
+        color: const Color(0xFFF6EEE5),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+        alignment: Alignment.center,
+        child: SizedBox.square(
+          dimension: 84,
+          child: FittedBox(
+            fit: BoxFit.contain,
+            child: _MealImageView(
+              path: path,
+              cacheWidth: 560,
+              cacheHeight: 420,
+              filterQuality: FilterQuality.low,
+              errorBuilder: (context, error, stackTrace) {
+                return const SizedBox(
+                  width: 84,
+                  height: 84,
+                  child: Center(
+                    child: Text('Image unavailable'),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ExistingImageSource extends _MealImageSource {
   _ExistingImageSource(this.path);
 
@@ -3314,24 +3460,7 @@ class _ExistingImageSource extends _MealImageSource {
 
   @override
   Widget buildPreview() {
-    return Image.file(
-      MealRepository.fileFromStoredPath(path),
-      width: 140,
-      height: 120,
-      cacheWidth: 420,
-      cacheHeight: 360,
-      filterQuality: FilterQuality.low,
-      fit: BoxFit.cover,
-      errorBuilder: (context, error, stackTrace) {
-        return Container(
-          width: 140,
-          height: 120,
-          color: const Color(0xFFF1E7DE),
-          alignment: Alignment.center,
-          child: const Text('Image unavailable'),
-        );
-      },
-    );
+    return _MealThumbnail(path: path);
   }
 
   @override
@@ -3345,15 +3474,7 @@ class _PickedImageSource extends _MealImageSource {
 
   @override
   Widget buildPreview() {
-    return Image.file(
-      MealRepository.fileFromStoredPath(file.path),
-      width: 140,
-      height: 120,
-      cacheWidth: 420,
-      cacheHeight: 360,
-      filterQuality: FilterQuality.low,
-      fit: BoxFit.cover,
-    );
+    return _MealThumbnail(path: file.path);
   }
 
   @override

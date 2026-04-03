@@ -138,6 +138,34 @@ class _MiraChatPageState extends State<MiraChatPage> {
     await _persistMessages();
   }
 
+  Future<void> _confirmClearConversation() async {
+    final shouldClear = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Delete Mira chat?'),
+          content: const Text(
+            'This will remove your saved conversation with Mira from this device.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Keep chat'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (shouldClear == true) {
+      await _clearConversation();
+    }
+  }
+
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scrollController.hasClients) {
@@ -159,7 +187,7 @@ class _MiraChatPageState extends State<MiraChatPage> {
         title: const Text('Chat with Mira'),
         actions: [
           IconButton(
-            onPressed: _isSending || _isLoadingHistory ? null : _clearConversation,
+            onPressed: _isSending || _isLoadingHistory ? null : _confirmClearConversation,
             tooltip: 'Clear chat',
             icon: const Icon(Icons.delete_outline_rounded),
           ),

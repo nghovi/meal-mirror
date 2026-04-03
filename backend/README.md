@@ -111,6 +111,11 @@ The Flutter app now uses:
 - `MEAL_MIRROR_API_BASE_URL` for meal analysis, Mira chat, and diet-goal summarizing
 - `MEAL_MIRROR_SYNC_API_BASE_URL` for full app snapshot sync and image upload/restore
 
+Important:
+- Sync is now disabled unless `MEAL_MIRROR_SYNC_API_BASE_URL` is set explicitly.
+- This prevents local builds from accidentally syncing with production data.
+- Use a local/staging sync URL for development, and set the production sync URL only in production release builds.
+
 The synced snapshot includes:
 - meal entries
 - diet goal
@@ -129,7 +134,7 @@ The backend also materializes normalized records during sync into:
 - `mira_conversations`
 - `mira_messages`
 
-Production sync is expected to live at `https://meal-mirror-api.truongdiem.online`.
+Production sync can live at `https://meal-mirror-api.truongdiem.online`, but it must be set explicitly in the build configuration.
 
 Example sync request:
 

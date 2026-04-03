@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/diet_goal.dart';
 import '../models/meal_entry.dart';
+import 'auth_service.dart';
 
 class AppStateSnapshot {
   const AppStateSnapshot({
@@ -26,11 +27,13 @@ class MealRepository {
   MealRepository({
     http.Client? client,
     String? syncApiBaseUrl,
+    AuthService? authService,
   })  : _client = client ?? http.Client(),
+        _authService = authService ?? AuthService.instance,
         _syncApiBaseUrl = syncApiBaseUrl ??
             const String.fromEnvironment(
               'MEAL_MIRROR_SYNC_API_BASE_URL',
-              defaultValue: 'https://meal-mirror-api.truongdiem.online',
+              defaultValue: '',
             );
 
   static const _storageKey = 'meal_entries_v3';
@@ -40,14 +43,33 @@ class MealRepository {
   static const _snapshotUpdatedAtKey = 'sync_snapshot_updated_at_v1';
 
   final http.Client _client;
+  final AuthService _authService;
   final String _syncApiBaseUrl;
   Future<void> _syncQueue = Future<void>.value();
 
   Future<AppStateSnapshot> loadAppState() async {
     final preferences = await SharedPreferences.getInstance();
-    final local = _readLocalSnapshot(preferences);
-    final merged = await _syncOnLoad(preferences, local);
-    return merged;
+    final localSnapshot = _readLocalSnapshot(preferences);
+    final localNormalized = await _normalizeSnapshotImagePaths(localSnapshot);
+    if (localNormalized.changed) {
+      await _writeLocalSnapshot(
+        preferences,
+        localNormalized.snapshot,
+        _parseTimestamp(preferences.getString(_snapshotUpdatedAtKey)),
+      );
+    }
+
+    final merged = await _syncOnLoad(preferences, localNormalized.snapshot);
+    final mergedNormalized = await _normalizeSnapshotImagePaths(merged);
+    if (mergedNormalized.changed) {
+      await _writeLocalSnapshot(
+        preferences,
+        mergedNormalized.snapshot,
+        _parseTimestamp(preferences.getString(_snapshotUpdatedAtKey)),
+      );
+    }
+
+    return mergedNormalized.snapshot;
   }
 
   Future<List<MealEntry>> loadEntries() async {
@@ -105,7 +127,7 @@ class MealRepository {
     final directory = await getApplicationDocumentsDirectory();
     final fileName = '${DateTime.now().millisecondsSinceEpoch}_${file.name}';
     final storedFile = File('${directory.path}/$fileName');
-    final copiedFile = await _fileFromStoredPath(file.path).copy(storedFile.path);
+    final copiedFile = await File(file.path).copy(storedFile.path);
     return copiedFile.path;
   }
 
@@ -159,6 +181,40 @@ class MealRepository {
     }
 
     try {
+      if (_authService.isAuthenticated) {
+        final remotePayload = await _fetchAuthenticatedSnapshot();
+        final remoteUpdatedAt = _parseTimestamp(remotePayload?['updatedAt']);
+        final localUpdatedAt = _parseTimestamp(
+          preferences.getString(_snapshotUpdatedAtKey),
+        );
+
+        if (remotePayload == null) {
+          if (_snapshotHasContent(local)) {
+            await _pushSnapshot(preferences, local);
+          }
+          return local;
+        }
+
+        final remoteSnapshot = await _snapshotFromRemotePayload(remotePayload);
+        final remoteIsNewer = remoteUpdatedAt.isAfter(localUpdatedAt);
+
+        if (!_snapshotHasContent(local) || remoteIsNewer) {
+          await _writeLocalSnapshot(
+            preferences,
+            remoteSnapshot,
+            remoteUpdatedAt,
+          );
+          return remoteSnapshot;
+        }
+
+        if (_snapshotHasContent(local) &&
+            localUpdatedAt.isAfter(remoteUpdatedAt)) {
+          await _pushSnapshot(preferences, local);
+        }
+
+        return local;
+      }
+
       final deviceId = await _deviceId(preferences);
       final remotePayload = await _fetchRemoteSnapshot(deviceId);
       final remoteUpdatedAt = _parseTimestamp(remotePayload?['updatedAt']);
@@ -185,7 +241,8 @@ class MealRepository {
         return remoteSnapshot;
       }
 
-      if (_snapshotHasContent(local) && localUpdatedAt.isAfter(remoteUpdatedAt)) {
+      if (_snapshotHasContent(local) &&
+          localUpdatedAt.isAfter(remoteUpdatedAt)) {
         await _pushSnapshot(preferences, local);
       }
     } catch (_) {
@@ -215,15 +272,45 @@ class MealRepository {
     SharedPreferences preferences,
     AppStateSnapshot snapshot,
   ) async {
-    final deviceId = await _deviceId(preferences);
     final updatedAt = DateTime.now().toUtc();
-    final remoteEntries = await _prepareEntriesForUpload(snapshot.entries, deviceId);
+    final remoteEntries = await _prepareEntriesForUpload(
+      snapshot.entries,
+      await _uploadOwnerKey(preferences),
+    );
+
+    if (_authService.isAuthenticated) {
+      final response = await _client.post(
+        Uri.parse('$_syncApiBaseUrl/app-state'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ${_authService.authToken}',
+        },
+        body: jsonEncode({
+          'snapshot': {
+            'updatedAt': updatedAt.toIso8601String(),
+            'entries': remoteEntries,
+            'dietGoal': snapshot.dietGoal?.toMap(),
+            'miraMessages': snapshot.miraMessages,
+          },
+        }),
+      );
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception('Sync failed with status ${response.statusCode}');
+      }
+
+      await preferences.setString(
+        _snapshotUpdatedAtKey,
+        updatedAt.toIso8601String(),
+      );
+      return;
+    }
 
     final response = await _client.post(
       Uri.parse('$_syncApiBaseUrl/sync-state'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
-        'deviceId': deviceId,
+        'deviceId': await _deviceId(preferences),
         'snapshot': {
           'updatedAt': updatedAt.toIso8601String(),
           'entries': remoteEntries,
@@ -245,13 +332,14 @@ class MealRepository {
 
   Future<List<Map<String, dynamic>>> _prepareEntriesForUpload(
     List<MealEntry> entries,
-    String deviceId,
+    String uploadOwnerKey,
   ) async {
     final remoteEntries = <Map<String, dynamic>>[];
 
     for (final entry in entries) {
       final map = entry.toMap();
-      map['imagePaths'] = await _uploadImagePaths(entry.imagePaths, deviceId);
+      map['imagePaths'] =
+          await _uploadImagePaths(entry.imagePaths, uploadOwnerKey);
       remoteEntries.add(map);
     }
 
@@ -260,7 +348,7 @@ class MealRepository {
 
   Future<List<String>> _uploadImagePaths(
     List<String> imagePaths,
-    String deviceId,
+    String uploadOwnerKey,
   ) async {
     final uploaded = <String>[];
 
@@ -278,9 +366,13 @@ class MealRepository {
       final bytes = await file.readAsBytes();
       final response = await _client.post(
         Uri.parse('$_syncApiBaseUrl/upload-image'),
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          if (_authService.isAuthenticated)
+            'Authorization': 'Bearer ${_authService.authToken}',
+        },
         body: jsonEncode({
-          'deviceId': deviceId,
+          'deviceId': uploadOwnerKey,
           'fileName': file.uri.pathSegments.isNotEmpty
               ? file.uri.pathSegments.last
               : 'meal-photo.jpg',
@@ -290,7 +382,8 @@ class MealRepository {
       );
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw Exception('Image upload failed with status ${response.statusCode}');
+        throw Exception(
+            'Image upload failed with status ${response.statusCode}');
       }
 
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
@@ -310,7 +403,30 @@ class MealRepository {
     }
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception('Remote snapshot fetch failed with status ${response.statusCode}');
+      throw Exception(
+          'Remote snapshot fetch failed with status ${response.statusCode}');
+    }
+
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    return decoded['snapshot'] as Map<String, dynamic>?;
+  }
+
+  Future<Map<String, dynamic>?> _fetchAuthenticatedSnapshot() async {
+    final response = await _client.get(
+      Uri.parse('$_syncApiBaseUrl/app-state'),
+      headers: {
+        'Authorization': 'Bearer ${_authService.authToken}',
+      },
+    );
+
+    if (response.statusCode == 404) {
+      return null;
+    }
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(
+        'Remote snapshot fetch failed with status ${response.statusCode}',
+      );
     }
 
     final decoded = jsonDecode(response.body) as Map<String, dynamic>;
@@ -321,7 +437,8 @@ class MealRepository {
     Map<String, dynamic> payload,
   ) async {
     final remoteEntries = (payload['entries'] as List<dynamic>? ?? const [])
-        .map((item) => MealEntry.fromMap(Map<String, dynamic>.from(item as Map)))
+        .map(
+            (item) => MealEntry.fromMap(Map<String, dynamic>.from(item as Map)))
         .toList();
 
     final localizedEntries = <MealEntry>[];
@@ -415,6 +532,65 @@ class MealRepository {
     );
   }
 
+  Future<({AppStateSnapshot snapshot, bool changed})>
+      _normalizeSnapshotImagePaths(
+    AppStateSnapshot snapshot,
+  ) async {
+    var changed = false;
+    final normalizedEntries = <MealEntry>[];
+
+    for (final entry in snapshot.entries) {
+      final normalizedPaths = <String>[];
+      var entryChanged = false;
+
+      for (final path in entry.imagePaths) {
+        final normalizedPath = await _normalizeStoredImagePath(path);
+        normalizedPaths.add(normalizedPath);
+        if (normalizedPath != path) {
+          entryChanged = true;
+        }
+      }
+
+      normalizedEntries.add(
+        entryChanged ? entry.copyWith(imagePaths: normalizedPaths) : entry,
+      );
+      changed = changed || entryChanged;
+    }
+
+    if (!changed) {
+      return (snapshot: snapshot, changed: false);
+    }
+
+    return (
+      snapshot: AppStateSnapshot(
+        entries: normalizedEntries,
+        dietGoal: snapshot.dietGoal,
+        miraMessages: snapshot.miraMessages,
+      ),
+      changed: true,
+    );
+  }
+
+  Future<String> _normalizeStoredImagePath(String path) async {
+    if (_isRemotePath(path)) {
+      return path;
+    }
+
+    final directFile = _fileFromStoredPath(path);
+    if (await directFile.exists()) {
+      return directFile.path;
+    }
+
+    final documentsDirectory = await getApplicationDocumentsDirectory();
+    final repairedPath =
+        _repairPathInDocumentsDirectory(path, documentsDirectory.path);
+    if (repairedPath != null) {
+      return repairedPath;
+    }
+
+    return path;
+  }
+
   Future<String> _deviceId(SharedPreferences preferences) async {
     final existing = preferences.getString(_deviceIdKey);
     if (existing != null && existing.isNotEmpty) {
@@ -423,9 +599,18 @@ class MealRepository {
 
     final random = Random.secure();
     final bytes = List<int>.generate(16, (_) => random.nextInt(256));
-    final deviceId = bytes.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+    final deviceId =
+        bytes.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
     await preferences.setString(_deviceIdKey, deviceId);
     return deviceId;
+  }
+
+  Future<String> _uploadOwnerKey(SharedPreferences preferences) async {
+    if (_authService.isAuthenticated) {
+      final userId = _authService.session?.userId ?? 'user';
+      return 'user_$userId';
+    }
+    return _deviceId(preferences);
   }
 
   bool _snapshotHasContent(AppStateSnapshot snapshot) {
@@ -454,9 +639,8 @@ class MealRepository {
 
   String _extensionForRemotePath(String path) {
     final uri = Uri.tryParse(path);
-    final lastSegment = uri?.pathSegments.isNotEmpty == true
-        ? uri!.pathSegments.last
-        : '';
+    final lastSegment =
+        uri?.pathSegments.isNotEmpty == true ? uri!.pathSegments.last : '';
     final dotIndex = lastSegment.lastIndexOf('.');
     if (dotIndex == -1) {
       return '.jpg';
@@ -483,5 +667,69 @@ File _fileFromStoredPath(String path) {
   if (path.startsWith('file://')) {
     return File(Uri.parse(path).toFilePath());
   }
-  return File(path);
+
+  final directFile = File(path);
+  if (directFile.existsSync()) {
+    return directFile;
+  }
+
+  for (final candidate in _candidateFilesForStalePath(path)) {
+    if (candidate.existsSync()) {
+      return candidate;
+    }
+  }
+
+  return directFile;
+}
+
+String? _repairPathInDocumentsDirectory(
+    String path, String documentsDirectoryPath) {
+  for (final candidate
+      in _candidatePathsForStalePath(path, documentsDirectoryPath)) {
+    if (File(candidate).existsSync()) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+Iterable<File> _candidateFilesForStalePath(String path) sync* {
+  final home = Platform.environment['HOME'];
+  if (home == null || home.isEmpty) {
+    return;
+  }
+
+  yield* _candidatePathsForStalePath(path, '$home/Documents').map(File.new);
+}
+
+Iterable<String> _candidatePathsForStalePath(
+  String path,
+  String documentsDirectoryPath,
+) sync* {
+  const documentsMarker = '/Documents/';
+  final documentsIndex = path.indexOf(documentsMarker);
+  if (documentsIndex != -1) {
+    final suffix = path.substring(documentsIndex + documentsMarker.length);
+    if (suffix.isNotEmpty) {
+      yield '$documentsDirectoryPath/$suffix';
+    }
+  }
+
+  final fileName = _fileNameFromPath(path);
+  if (fileName == null || fileName.isEmpty) {
+    return;
+  }
+
+  yield '$documentsDirectoryPath/$fileName';
+  yield '$documentsDirectoryPath/synced_images/$fileName';
+}
+
+String? _fileNameFromPath(String path) {
+  final sanitized =
+      path.startsWith('file://') ? Uri.parse(path).toFilePath() : path;
+  final segments = sanitized.split('/');
+  if (segments.isEmpty) {
+    return null;
+  }
+  return segments.lastWhere((segment) => segment.isNotEmpty, orElse: () => '');
 }
