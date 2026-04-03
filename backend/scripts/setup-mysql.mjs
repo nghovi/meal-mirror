@@ -37,6 +37,4 @@ await connection.query(`
 
 await connection.end();
 
-console.log(
-  \`Meal Mirror MySQL setup complete for database: \${config.database}\`
-);
+console.log(`Meal Mirror MySQL setup complete for database: ${config.database}`);
