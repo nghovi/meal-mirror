@@ -6,7 +6,7 @@ cd "$ROOT_DIR"
 
 export NODE_ENV=production
 export PORT="${PORT:-8787}"
-export PATH="$HOME/local/node-v18.18.0-linux-x64-glibc-217/bin:$PATH"
+export PATH="$HOME/local/node-v20.20.1-linux-x64-glibc-217/bin:$PATH"
 
 if [[ -f "$ROOT_DIR/.env.production" ]]; then
   set -a
@@ -14,4 +14,4 @@ if [[ -f "$ROOT_DIR/.env.production" ]]; then
   set +a
 fi
 
-exec "$HOME/local/node-v18.18.0-linux-x64-glibc-217/bin/node" server.js
+exec "$HOME/local/node-v20.20.1-linux-x64-glibc-217/bin/node" server.js

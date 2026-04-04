@@ -32,12 +32,12 @@ Then keep `OPENAI_API_KEY` only on the server.
 
 Templates for the production server are included here:
 
-- env example: [backend/.env.production.example](/Users/nam/projects/an_kieng/backend/.env.production.example)
-- run script: [backend/ops/run.sh](/Users/nam/projects/an_kieng/backend/ops/run.sh)
-- systemd unit: [backend/ops/meal-mirror-api.service](/Users/nam/projects/an_kieng/backend/ops/meal-mirror-api.service)
-- apache vhost: [backend/ops/meal-mirror-api.httpd.conf](/Users/nam/projects/an_kieng/backend/ops/meal-mirror-api.httpd.conf)
-- apache ssl vhost: [backend/ops/meal-mirror-api-ssl.httpd.conf](/Users/nam/projects/an_kieng/backend/ops/meal-mirror-api-ssl.httpd.conf)
-- nginx vhost: [backend/ops/meal-mirror-api.nginx.conf](/Users/nam/projects/an_kieng/backend/ops/meal-mirror-api.nginx.conf)
+- env example: [backend/.env.production.example](/Users/nam/projects/meal_mirror/backend/.env.production.example)
+- run script: [backend/ops/run.sh](/Users/nam/projects/meal_mirror/backend/ops/run.sh)
+- systemd unit: [backend/ops/meal-mirror-api.service](/Users/nam/projects/meal_mirror/backend/ops/meal-mirror-api.service)
+- apache vhost: [backend/ops/meal-mirror-api.httpd.conf](/Users/nam/projects/meal_mirror/backend/ops/meal-mirror-api.httpd.conf)
+- apache ssl vhost: [backend/ops/meal-mirror-api-ssl.httpd.conf](/Users/nam/projects/meal_mirror/backend/ops/meal-mirror-api-ssl.httpd.conf)
+- nginx vhost: [backend/ops/meal-mirror-api.nginx.conf](/Users/nam/projects/meal_mirror/backend/ops/meal-mirror-api.nginx.conf)
 
 Suggested production layout:
 
@@ -50,12 +50,16 @@ Suggested rollout:
 1. Copy this repo to `/home/centos/apps/meal-mirror`.
 2. Create `backend/.env.production` from the example and set `OPENAI_API_KEY`.
 3. Set the `MEAL_MIRROR_DB_*` values in `backend/.env.production`.
-4. Run `npm install` in `backend/`.
-5. Run `npm run db:setup` in `backend/`.
-6. Copy the systemd unit into `/etc/systemd/system/meal-mirror-api.service`.
-7. Copy the Apache vhost files into `/etc/httpd/conf.d/`.
-8. Issue the certificate and copy the generated fullchain/key into `/etc/ssl/private/`.
-9. Restart `systemd` and `httpd`.
+4. Install a modern compatible Node runtime on the server, for example:
+   `~/local/node-v20.20.1-linux-x64-glibc-217`
+5. Run backend install/setup with that Node first in `PATH`, for example:
+   `export PATH=$HOME/local/node-v20.20.1-linux-x64-glibc-217/bin:$PATH`
+   then `npm install` in `backend/`.
+6. Run `npm run db:setup` in `backend/`.
+7. Copy the systemd unit into `/etc/systemd/system/meal-mirror-api.service`.
+8. Copy the Apache vhost files into `/etc/httpd/conf.d/`.
+9. Issue the certificate and copy the generated fullchain/key into `/etc/ssl/private/`.
+10. Restart `systemd` and `httpd`.
 
 ## Run locally
 
