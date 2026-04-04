@@ -51,7 +51,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _createMeal() async {
-    await _openMealEditor();
+    await _openQuickCaptureSheet();
   }
 
   Future<void> _editMeal(MealEntry entry) async {
@@ -102,6 +102,113 @@ class _HomePageState extends State<HomePage> {
         drinkVolumeMl: entry.drinkVolumeMl,
       ),
     );
+  }
+
+  Future<void> _duplicateEntry(MealEntry entry) async {
+    final now = DateTime.now();
+    await _openMealEditor(
+      seed: _MealEditorSeed(
+        mealType: entry.mealType,
+        capturedAt: now,
+        summary: entry.displaySummary,
+        feelingRating: entry.feelingRating,
+        feelingNote: entry.feelingNote,
+        drinkVolumeMl: entry.drinkVolumeMl,
+      ),
+      existing: null,
+    );
+  }
+
+  Future<void> _openQuickCaptureSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: Colors.white,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Log a meal',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      Navigator.of(context).pop();
+                      _openMealEditor();
+                    },
+                    child: const Text('Open editor'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              _QuickCaptureCard(
+                recentEntries: _recentEntries,
+                onCameraTap: () {
+                  Navigator.of(context).pop();
+                  _quickCameraCapture();
+                },
+                onDrinkTap: ({required summary, required volumeMl}) async {
+                  Navigator.of(context).pop();
+                  await _quickDrinkCapture(summary: summary, volumeMl: volumeMl);
+                },
+                onRecentTap: (entry) {
+                  Navigator.of(context).pop();
+                  _repeatRecentEntry(entry);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _deleteEntry(MealEntry entry) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete meal?'),
+        content: const Text('This meal will be removed from your timeline.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Keep it'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) {
+      return;
+    }
+
+    final nextEntries = [
+      for (final current in _entries)
+        if (current.id != entry.id) current,
+    ];
+    await _repository.saveEntries(nextEntries);
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _entries = nextEntries;
+    });
   }
 
   Future<void> _openMealEditor({
@@ -193,6 +300,10 @@ class _HomePageState extends State<HomePage> {
       return persisted;
     }
 
+    if (existing != null) {
+      return persisted;
+    }
+
     return existing?.imagePaths ?? const [];
   }
 
@@ -270,13 +381,17 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Future<void> _openTodayDrinksRoadmap() async {
-    final drinks = _todayDrinkEntries;
+  Future<void> _openDrinksTimeline() async {
+    final drinks = _currentDrinkEntries;
     await showDialog<void>(
       context: context,
       barrierColor: const Color(0x660F0B08),
       builder: (context) => _TodayDrinksSheet(
         drinks: drinks,
+        onOpenEntry: (entry) {
+          Navigator.of(context).pop();
+          _editMeal(entry);
+        },
       ),
     );
   }
@@ -321,39 +436,38 @@ class _HomePageState extends State<HomePage> {
     }).toList();
   }
 
-  int get _totalCalories => _filteredEntries.fold(
+  List<MealEntry> get _dashboardEntries =>
+      _entries.where((entry) => _isSameDay(entry.capturedAt, _referenceDate)).toList();
+
+  List<MealEntry> get _dashboardMealEntries =>
+      _dashboardEntries.where((entry) => !entry.isDrink).toList();
+
+  List<MealEntry> get _dashboardDrinkEntries =>
+      _dashboardEntries.where((entry) => entry.isDrink).toList();
+
+  int get _totalCalories => _dashboardEntries.fold(
         0,
         (sum, entry) => sum + entry.userEstimatedCalories,
       );
 
   int get _averageCalories {
-    if (_filteredEntries.isEmpty) {
+    final mealEntries = _dashboardMealEntries;
+    if (mealEntries.isEmpty) {
       return 0;
     }
 
-    return (_totalCalories / _filteredEntries.length).round();
+    final mealCalories = mealEntries.fold<int>(
+      0,
+      (sum, entry) => sum + entry.userEstimatedCalories,
+    );
+    return (mealCalories / mealEntries.length).round();
   }
 
-  int get _todayDrinkVolumeMl {
-    final now = DateTime.now();
-    return _entries
-        .where(
-          (entry) =>
-              entry.mealType == MealType.drink &&
-              _isSameDay(entry.capturedAt, now),
-        )
-        .fold(0, (sum, entry) => sum + entry.drinkVolumeMl);
-  }
+  List<MealEntry> get _filteredDrinkEntries =>
+      _filteredEntries.where((entry) => entry.isDrink).toList();
 
-  List<MealEntry> get _todayDrinkEntries {
-    final now = DateTime.now();
-    final drinks = _entries
-        .where(
-          (entry) =>
-              entry.mealType == MealType.drink &&
-              _isSameDay(entry.capturedAt, now),
-        )
-        .toList()
+  List<MealEntry> get _currentDrinkEntries {
+    final drinks = _filteredDrinkEntries.toList()
       ..sort((a, b) => a.capturedAt.compareTo(b.capturedAt));
     return drinks;
   }
@@ -375,7 +489,7 @@ class _HomePageState extends State<HomePage> {
       }
 
       recent.add(entry);
-      if (recent.length == 6) {
+      if (recent.length == 5) {
         break;
       }
     }
@@ -451,6 +565,159 @@ class _HomePageState extends State<HomePage> {
     return summaryParts.join(' ');
   }
 
+  String get _dashboardLabel {
+    final now = DateTime.now();
+    if (_isSameDay(_referenceDate, now)) {
+      return 'Review dashboard · Today';
+    }
+    return 'Review dashboard · ${_referenceDate.day}/${_referenceDate.month}/${_referenceDate.year}';
+  }
+
+  String get _drinkStatLabel {
+    return 'Drinks';
+  }
+
+  String get _mealStatLabel {
+    return 'Meals logged';
+  }
+
+  String get _mealStatValue {
+    final mealCount = _dashboardMealEntries.length;
+    return '$mealCount meal${mealCount == 1 ? '' : 's'}';
+  }
+
+  String get _drinkStatValue {
+    final drinkCount = _dashboardDrinkEntries.length;
+    final volumeMl = _dashboardDrinkEntries.fold<int>(
+      0,
+      (sum, entry) => sum + entry.drinkVolumeMl,
+    );
+    if (volumeMl <= 0) {
+      return '$drinkCount drink${drinkCount == 1 ? '' : 's'}';
+    }
+    return '$drinkCount drink${drinkCount == 1 ? '' : 's'} • $volumeMl mL';
+  }
+
+  String _picturesButtonLabel() {
+    switch (_period) {
+      case ReviewPeriod.day:
+        return 'This day in pictures';
+      case ReviewPeriod.week:
+        return 'This week in pictures';
+      case ReviewPeriod.month:
+        return 'This month in pictures';
+      case ReviewPeriod.year:
+        return 'This year in pictures';
+    }
+  }
+
+  List<MealEntry> get _pictureEntries {
+    final seen = <String>{};
+    final pictures = <MealEntry>[];
+    for (final entry in _filteredEntries) {
+      if (entry.imagePaths.isEmpty || entry.isDrink) {
+        continue;
+      }
+      final key =
+          '${entry.mealType.name}|${entry.displaySummary.trim().toLowerCase()}';
+      if (!seen.add(key)) {
+        continue;
+      }
+      pictures.add(entry);
+    }
+    return pictures;
+  }
+
+  Future<void> _openPicturesGallery() async {
+    final entries = _pictureEntries;
+    if (entries.isEmpty) {
+      return;
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) => Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 28),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _picturesButtonLabel(),
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+              ),
+              const SizedBox(height: 14),
+              Flexible(
+                child: GridView.builder(
+                  shrinkWrap: true,
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    crossAxisSpacing: 10,
+                    mainAxisSpacing: 10,
+                    childAspectRatio: 1,
+                  ),
+                  itemCount: entries.length,
+                  itemBuilder: (context, index) {
+                    final entry = entries[index];
+                    return GestureDetector(
+                      onTap: () {
+                        Navigator.of(context).pop();
+                        _editMeal(entry);
+                      },
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(22),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            _MealThumbnail(
+                              path: entry.imagePaths.first,
+                              size: 160,
+                              borderRadius: 0,
+                            ),
+                            Positioned(
+                              left: 10,
+                              right: 10,
+                              bottom: 10,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 8,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.black54,
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                child: Text(
+                                  entry.displaySummary,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   List<String> _deriveTags(_MealDraft draft) {
     return const [];
   }
@@ -510,18 +777,14 @@ class _HomePageState extends State<HomePage> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           _OverviewCard(
+                            title: _dashboardLabel,
                             totalCalories: _totalCalories,
                             averageCalories: _averageCalories,
-                            entryCount: filteredEntries.length,
-                            todayDrinkVolumeMl: _todayDrinkVolumeMl,
-                            onTapDrinksToday: _openTodayDrinksRoadmap,
-                          ),
-                          const SizedBox(height: 18),
-                          _QuickCaptureCard(
-                            recentEntries: _recentEntries,
-                            onCameraTap: _quickCameraCapture,
-                            onDrinkTap: _quickDrinkCapture,
-                            onRecentTap: _repeatRecentEntry,
+                            mealStatLabel: _mealStatLabel,
+                            mealStatValue: _mealStatValue,
+                            drinkStatLabel: _drinkStatLabel,
+                            drinkStatValue: _drinkStatValue,
+                            onTapDrinksToday: _openDrinksTimeline,
                           ),
                           const SizedBox(height: 18),
                           _DietGoalCard(
@@ -536,6 +799,9 @@ class _HomePageState extends State<HomePage> {
                             onChanged: (period) {
                               setState(() {
                                 _period = period;
+                                if (period == ReviewPeriod.day) {
+                                  _referenceDate = DateTime.now();
+                                }
                               });
                             },
                             onPickDate: _pickReferenceDate,
@@ -545,6 +811,9 @@ class _HomePageState extends State<HomePage> {
                             note: _coachNote,
                             period: _period,
                             onChat: _openMiraChat,
+                            picturesButtonLabel:
+                                _pictureEntries.isEmpty ? null : _picturesButtonLabel(),
+                            onPictures: _pictureEntries.isEmpty ? null : _openPicturesGallery,
                           ),
                           const SizedBox(height: 24),
                           Text(
@@ -572,6 +841,11 @@ class _HomePageState extends State<HomePage> {
                           return _MealCard(
                             entry: entry,
                             onEdit: () => _editMeal(entry),
+                            onDelete: () => _deleteEntry(entry),
+                            onDuplicate:
+                                _isSameDay(entry.capturedAt, DateTime.now())
+                                    ? null
+                                    : () => _duplicateEntry(entry),
                           );
                         },
                         separatorBuilder: (context, index) =>
@@ -594,17 +868,23 @@ class _HomePageState extends State<HomePage> {
 
 class _OverviewCard extends StatelessWidget {
   const _OverviewCard({
+    required this.title,
     required this.totalCalories,
     required this.averageCalories,
-    required this.entryCount,
-    required this.todayDrinkVolumeMl,
+    required this.mealStatLabel,
+    required this.mealStatValue,
+    required this.drinkStatLabel,
+    required this.drinkStatValue,
     required this.onTapDrinksToday,
   });
 
+  final String title;
   final int totalCalories;
   final int averageCalories;
-  final int entryCount;
-  final int todayDrinkVolumeMl;
+  final String mealStatLabel;
+  final String mealStatValue;
+  final String drinkStatLabel;
+  final String drinkStatValue;
   final VoidCallback onTapDrinksToday;
 
   @override
@@ -623,8 +903,8 @@ class _OverviewCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Review dashboard',
+          Text(
+            title,
             style: TextStyle(
               color: Colors.white70,
               fontSize: 16,
@@ -651,17 +931,19 @@ class _OverviewCard extends StatelessWidget {
               Row(
                 children: [
                   Expanded(
-                    child:
-                        _StatChip(label: 'Meals logged', value: '$entryCount'),
+                    child: _StatChip(
+                      label: mealStatLabel,
+                      value: mealStatValue,
+                      icon: Icons.restaurant_outlined,
+                    ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: _StatChip(
-                      label: 'Drinks today',
-                      value: todayDrinkVolumeMl > 0
-                          ? '$todayDrinkVolumeMl mL'
-                          : '0 mL',
+                      label: drinkStatLabel,
+                      value: drinkStatValue,
                       onTap: onTapDrinksToday,
+                      icon: Icons.local_drink_outlined,
                     ),
                   ),
                 ],
@@ -694,7 +976,7 @@ class _QuickCaptureCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: const Color(0xFFF8F1E8),
         borderRadius: BorderRadius.circular(20),
@@ -723,42 +1005,72 @@ class _QuickCaptureCard extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           Wrap(
-            spacing: 8,
-            runSpacing: 8,
+            spacing: 6,
+            runSpacing: 4,
             children: [
               FilledButton.icon(
                 onPressed: onCameraTap,
+                style: FilledButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                ),
                 icon: const Icon(Icons.camera_alt_outlined),
                 label: const Text('Camera'),
               ),
               OutlinedButton.icon(
                 onPressed: () => onDrinkTap(summary: 'Tea', volumeMl: 100),
+                style: OutlinedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                ),
                 icon: const Icon(Icons.emoji_food_beverage_outlined),
                 label: const Text('Tea 100'),
               ),
               OutlinedButton.icon(
                 onPressed: () => onDrinkTap(summary: 'Coffee', volumeMl: 100),
+                style: OutlinedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                ),
                 icon: const Icon(Icons.coffee_outlined),
                 label: const Text('Coffee 100'),
               ),
               OutlinedButton.icon(
                 onPressed: () => onDrinkTap(summary: 'Water', volumeMl: 150),
+                style: OutlinedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                ),
                 icon: const Icon(Icons.water_drop_outlined),
                 label: const Text('Water 150'),
               ),
             ],
           ),
           if (recentEntries.isNotEmpty) ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
             Wrap(
-              spacing: 8,
-              runSpacing: 8,
+              spacing: 4,
+              runSpacing: 4,
               children: [
                 for (final entry in recentEntries)
                   ActionChip(
                     onPressed: () => onRecentTap(entry),
+                    visualDensity: VisualDensity.compact,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     avatar: Icon(
                       entry.mealType == MealType.drink
                           ? Icons.local_drink_outlined
@@ -1006,11 +1318,13 @@ class _StatChip extends StatelessWidget {
     required this.label,
     required this.value,
     this.onTap,
+    this.icon,
   });
 
   final String label;
   final String value;
   final VoidCallback? onTap;
+  final IconData? icon;
 
   @override
   Widget build(BuildContext context) {
@@ -1032,8 +1346,21 @@ class _StatChip extends StatelessWidget {
               Row(
                 children: [
                   Expanded(
-                      child: Text(label,
-                          style: const TextStyle(color: Colors.white70))),
+                    child: Row(
+                      children: [
+                        if (icon != null) ...[
+                          Icon(icon, size: 14, color: Colors.white70),
+                          const SizedBox(width: 6),
+                        ],
+                        Expanded(
+                          child: Text(
+                            label,
+                            style: const TextStyle(color: Colors.white70),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                   if (onTap != null)
                     const Icon(
                       Icons.chevron_right_rounded,
@@ -1062,9 +1389,11 @@ class _StatChip extends StatelessWidget {
 class _TodayDrinksSheet extends StatelessWidget {
   const _TodayDrinksSheet({
     required this.drinks,
+    required this.onOpenEntry,
   });
 
   final List<MealEntry> drinks;
+  final ValueChanged<MealEntry> onOpenEntry;
 
   @override
   Widget build(BuildContext context) {
@@ -1101,7 +1430,7 @@ class _TodayDrinksSheet extends StatelessWidget {
             isShortTimeline ? 12 : 16,
             18,
             isShortTimeline ? 12 : 16,
-            16,
+            22,
           ),
           child: drinks.isEmpty
               ? Container(
@@ -1147,7 +1476,7 @@ class _TodayDrinksSheet extends StatelessWidget {
                             ),
                           ),
                           ListView.separated(
-                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            padding: const EdgeInsets.fromLTRB(0, 4, 0, 10),
                             shrinkWrap: true,
                             physics: const NeverScrollableScrollPhysics(),
                             itemCount: drinks.length,
@@ -1157,6 +1486,7 @@ class _TodayDrinksSheet extends StatelessWidget {
                             itemBuilder: (context, index) => _DrinkTimelineNode(
                               entry: drinks[index],
                               drinkCount: drinks.length,
+                              onTap: () => onOpenEntry(drinks[index]),
                             ),
                           ),
                         ],
@@ -1196,6 +1526,7 @@ class _TodayDrinksSheet extends StatelessWidget {
                                 child: _DrinkTimelineNode(
                                   entry: drinks[index],
                                   drinkCount: drinks.length,
+                                  onTap: () => onOpenEntry(drinks[index]),
                                 ),
                               ),
                           ],
@@ -1228,7 +1559,7 @@ class _TodayDrinksSheet extends StatelessWidget {
     required double availableHeight,
   }) {
     final topInset = 8 + metrics.iconCenterOffset;
-    final bottomInset = 16 + metrics.iconCenterOffset;
+    final bottomInset = 26 + metrics.iconCenterOffset;
     final minCenterGap = metrics.nodeHeight + _timelineGapFor(drinks.length);
     final minContentHeight =
         topInset + bottomInset + ((drinks.length - 1) * minCenterGap);
@@ -1288,10 +1619,12 @@ class _DrinkTimelineNode extends StatelessWidget {
   const _DrinkTimelineNode({
     required this.entry,
     required this.drinkCount,
+    required this.onTap,
   });
 
   final MealEntry entry;
   final int drinkCount;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -1322,16 +1655,20 @@ class _DrinkTimelineNode extends StatelessWidget {
             SizedBox(
               width: metrics.iconSlotWidth,
               child: Center(
-                child: Container(
-                  padding: EdgeInsets.all(metrics.iconPadding),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Icon(
-                    icon,
-                    size: metrics.iconSize,
-                    color: accent,
+                child: InkWell(
+                  onTap: onTap,
+                  borderRadius: BorderRadius.circular(999),
+                  child: Container(
+                    padding: EdgeInsets.all(metrics.iconPadding),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Icon(
+                      icon,
+                      size: metrics.iconSize,
+                      color: accent,
+                    ),
                   ),
                 ),
               ),
@@ -1533,10 +1870,13 @@ class _PeriodSelector extends StatelessWidget {
           child: OutlinedButton(
             onPressed: onPickDate,
             style: OutlinedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-              minimumSize: const Size(52, 52),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              minimumSize: const Size(44, 40),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
             ),
-            child: const Icon(Icons.calendar_month_outlined),
+            child: const Icon(Icons.calendar_month_outlined, size: 20),
           ),
         ),
       ],
@@ -1553,11 +1893,15 @@ class _CoachCard extends StatefulWidget {
     required this.note,
     required this.period,
     required this.onChat,
+    this.picturesButtonLabel,
+    this.onPictures,
   });
 
   final String note;
   final ReviewPeriod period;
   final VoidCallback onChat;
+  final String? picturesButtonLabel;
+  final VoidCallback? onPictures;
 
   @override
   State<_CoachCard> createState() => _CoachCardState();
@@ -1579,7 +1923,7 @@ class _CoachCardState extends State<_CoachCard> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Container(
-              width: 46,
+              width: 40,
               height: 46,
               decoration: BoxDecoration(
                 color: const Color(0xFFF1D8C6),
@@ -1587,7 +1931,7 @@ class _CoachCardState extends State<_CoachCard> {
               ),
               child: const Icon(Icons.auto_awesome_rounded),
             ),
-            const SizedBox(width: 14),
+            const SizedBox(width: 10),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1635,10 +1979,23 @@ class _CoachCardState extends State<_CoachCard> {
                     ),
                   ],
                   const SizedBox(height: 12),
-                  FilledButton.tonalIcon(
-                    onPressed: widget.onChat,
-                    icon: const Icon(Icons.chat_bubble_outline_rounded),
-                    label: const Text('Chat with Mira'),
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      FilledButton.tonalIcon(
+                        onPressed: widget.onChat,
+                        icon: const Icon(Icons.chat_bubble_outline_rounded),
+                        label: const Text('Chat with Mira'),
+                      ),
+                      if (widget.onPictures != null &&
+                          widget.picturesButtonLabel != null)
+                        OutlinedButton.icon(
+                          onPressed: widget.onPictures,
+                          icon: const Icon(Icons.photo_library_outlined),
+                          label: Text(widget.picturesButtonLabel!),
+                        ),
+                    ],
                   ),
                 ],
               ),
@@ -1725,14 +2082,20 @@ class _GuideRow extends StatelessWidget {
   }
 }
 
+enum _MealCardAction { miraReview, edit, duplicate, delete }
+
 class _MealCard extends StatelessWidget {
   const _MealCard({
     required this.entry,
     required this.onEdit,
+    required this.onDelete,
+    this.onDuplicate,
   });
 
   final MealEntry entry;
   final VoidCallback onEdit;
+  final VoidCallback onDelete;
+  final VoidCallback? onDuplicate;
 
   @override
   Widget build(BuildContext context) {
@@ -1743,39 +2106,45 @@ class _MealCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        entry.mealType.label,
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                              fontWeight: FontWeight.w700,
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            entry.mealType.icon,
+                            size: 18,
+                            color: const Color(0xFF8A664F),
+                          ),
+                          const SizedBox(width: 8),
+                          Flexible(
+                            child: Text(
+                              entry.mealType.label,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleLarge
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                  ),
                             ),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 4),
                       Text(
                         _formatDateTime(entry.capturedAt),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                               color: const Color(0xFF6E6257),
                             ),
                       ),
                     ],
                   ),
-                ),
-                if (entry.aiReview.trim().isNotEmpty)
-                  IconButton(
-                    onPressed: () => _showAiReview(context),
-                    tooltip: 'Mira review',
-                    visualDensity: VisualDensity.compact,
-                    iconSize: 18,
-                    icon: const Icon(Icons.auto_awesome_outlined),
-                  ),
-                IconButton(
-                  onPressed: onEdit,
-                  icon: const Icon(Icons.edit_outlined),
                 ),
                 Container(
                   padding:
@@ -1788,6 +2157,65 @@ class _MealCard extends StatelessWidget {
                     '${entry.userEstimatedCalories} kcal',
                     style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
+                ),
+                PopupMenuButton<_MealCardAction>(
+                  onSelected: (action) {
+                    switch (action) {
+                      case _MealCardAction.miraReview:
+                        _showAiReview(context);
+                      case _MealCardAction.edit:
+                        onEdit();
+                      case _MealCardAction.duplicate:
+                        onDuplicate?.call();
+                      case _MealCardAction.delete:
+                        onDelete();
+                    }
+                  },
+                  itemBuilder: (context) => [
+                    if (entry.aiReview.trim().isNotEmpty)
+                      const PopupMenuItem(
+                        value: _MealCardAction.miraReview,
+                        child: Row(
+                          children: [
+                            Icon(Icons.auto_awesome_outlined, size: 18),
+                            SizedBox(width: 10),
+                            Text('Mira review'),
+                          ],
+                        ),
+                      ),
+                    const PopupMenuItem(
+                      value: _MealCardAction.edit,
+                      child: Row(
+                        children: [
+                          Icon(Icons.edit_outlined, size: 18),
+                          SizedBox(width: 10),
+                          Text('Edit'),
+                        ],
+                      ),
+                    ),
+                    if (onDuplicate != null)
+                      const PopupMenuItem(
+                        value: _MealCardAction.duplicate,
+                        child: Row(
+                          children: [
+                            Icon(Icons.content_copy_outlined, size: 18),
+                            SizedBox(width: 10),
+                            Text('Duplicate'),
+                          ],
+                        ),
+                      ),
+                    const PopupMenuItem(
+                      value: _MealCardAction.delete,
+                      child: Row(
+                        children: [
+                          Icon(Icons.delete_outline_rounded, size: 18),
+                          SizedBox(width: 10),
+                          Text('Delete'),
+                        ],
+                      ),
+                    ),
+                  ],
+                  icon: const Icon(Icons.more_horiz_rounded),
                 ),
               ],
             ),
@@ -1850,31 +2278,16 @@ class _MealCard extends StatelessWidget {
                 color: const Color(0xFFF3ECE5),
                 borderRadius: BorderRadius.circular(16),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              child: Row(
                 children: [
-                  if (entry.isSharedMeal) ...[
-                    Text(
-                      'Whole table: ${entry.totalEstimatedCalories} kcal',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: const Color(0xFF7A5A45),
-                            fontWeight: FontWeight.w600,
-                          ),
+                  _StarDisplay(rating: entry.feelingRating),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      entry.feelingNote.isEmpty
+                          ? entry.feelingLabel
+                          : entry.feelingNote,
                     ),
-                    const SizedBox(height: 10),
-                  ],
-                  Row(
-                    children: [
-                      _StarDisplay(rating: entry.feelingRating),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          entry.feelingNote.isEmpty
-                              ? entry.feelingLabel
-                              : entry.feelingNote,
-                        ),
-                      ),
-                    ],
                   ),
                 ],
               ),
@@ -1886,10 +2299,8 @@ class _MealCard extends StatelessWidget {
   }
 
   String _formatDateTime(DateTime value) {
-    final hour = value.hour % 12 == 0 ? 12 : value.hour % 12;
     final minute = value.minute.toString().padLeft(2, '0');
-    final suffix = value.hour >= 12 ? 'PM' : 'AM';
-    return '${value.day}/${value.month}/${value.year} at $hour:$minute $suffix';
+    return '${value.day}/${value.month}/${value.year} • ${value.hour.toString().padLeft(2, '0')}:$minute';
   }
 
   void _showAiReview(BuildContext context) {
@@ -3414,39 +3825,35 @@ class _MealImageView extends StatelessWidget {
 }
 
 class _MealThumbnail extends StatelessWidget {
-  const _MealThumbnail({required this.path});
+  const _MealThumbnail({
+    required this.path,
+    this.size = 120,
+    this.borderRadius = 18,
+  });
 
   final String path;
+  final double size;
+  final double borderRadius;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: 96,
-      height: 120,
-      child: Container(
-        color: const Color(0xFFF6EEE5),
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-        alignment: Alignment.center,
-        child: SizedBox.square(
-          dimension: 84,
-          child: FittedBox(
-            fit: BoxFit.contain,
-            child: _MealImageView(
-              path: path,
-              cacheWidth: 560,
-              cacheHeight: 420,
-              filterQuality: FilterQuality.low,
-              errorBuilder: (context, error, stackTrace) {
-                return const SizedBox(
-                  width: 84,
-                  height: 84,
-                  child: Center(
-                    child: Text('Image unavailable'),
-                  ),
-                );
-              },
-            ),
-          ),
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(borderRadius),
+      child: SizedBox.square(
+        dimension: size,
+        child: _MealImageView(
+          path: path,
+          fit: BoxFit.cover,
+          cacheWidth: 720,
+          cacheHeight: 720,
+          filterQuality: FilterQuality.low,
+          errorBuilder: (context, error, stackTrace) {
+            return Container(
+              color: const Color(0xFFF6EEE5),
+              alignment: Alignment.center,
+              child: const Text('Image unavailable'),
+            );
+          },
         ),
       ),
     );

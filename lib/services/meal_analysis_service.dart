@@ -62,6 +62,10 @@ class MealAnalysisService {
 
   static const coachName = 'Mira';
 
+  Map<String, dynamic> _decodeJsonResponse(http.Response response) {
+    return jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+  }
+
   Future<MealAnalysisSuggestion> analyzeMeal({
     required List<XFile> images,
     required MealType mealType,
@@ -170,7 +174,7 @@ class MealAnalysisService {
         return _fallbackGoalBrief(normalized);
       }
 
-      final json = jsonDecode(response.body) as Map<String, dynamic>;
+      final json = _decodeJsonResponse(response);
       final outputText = _extractOpenAiOutputText(json);
       if (outputText.isEmpty) {
         return _fallbackGoalBrief(normalized);
@@ -192,6 +196,7 @@ class MealAnalysisService {
     required String message,
     required List<MealEntry> recentEntries,
     String? dietGoalBrief,
+    List<Map<String, dynamic>> conversationMessages = const [],
   }) async {
     final trimmedMessage = message.trim();
     if (trimmedMessage.isEmpty) {
@@ -215,6 +220,7 @@ class MealAnalysisService {
         recentEntries: recentEntries,
         dietGoalBrief: goalBrief,
         recentSummary: recentSummary,
+        conversationMessages: conversationMessages,
       );
     }
 
@@ -251,6 +257,14 @@ class MealAnalysisService {
                     'type': 'input_text',
                     'text': 'Diet mission: $goalBrief',
                   },
+                for (final item in conversationMessages.take(
+                  conversationMessages.length > 8 ? 8 : conversationMessages.length,
+                ))
+                  {
+                    'type': 'input_text',
+                    'text':
+                        '${item['isUser'] == true ? 'User' : 'Mira'}: ${item['text'] ?? ''}',
+                  },
                 {
                   'type': 'input_text',
                   'text': 'Recent meals:\n$recentSummary',
@@ -266,7 +280,7 @@ class MealAnalysisService {
       );
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        final json = jsonDecode(response.body) as Map<String, dynamic>;
+        final json = _decodeJsonResponse(response);
         final outputText = _extractOpenAiOutputText(json);
         if (outputText.isNotEmpty) {
           return outputText.trim();
@@ -293,7 +307,7 @@ class MealAnalysisService {
         return _fallbackGoalBrief(normalized);
       }
 
-      final json = jsonDecode(response.body) as Map<String, dynamic>;
+      final json = _decodeJsonResponse(response);
       final brief = (json['brief'] as String? ?? '').trim();
       return brief.isEmpty ? _fallbackGoalBrief(normalized) : brief;
     } catch (_) {
@@ -306,6 +320,7 @@ class MealAnalysisService {
     required List<MealEntry> recentEntries,
     required String dietGoalBrief,
     required String recentSummary,
+    required List<Map<String, dynamic>> conversationMessages,
   }) async {
     try {
       final response = await _client.post(
@@ -316,11 +331,12 @@ class MealAnalysisService {
           'dietGoalBrief': dietGoalBrief,
           'recentSummary': recentSummary,
           'recentEntries': recentEntries.map((entry) => entry.toMap()).toList(),
+          'conversationMessages': conversationMessages,
         }),
       );
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        final json = jsonDecode(response.body) as Map<String, dynamic>;
+        final json = _decodeJsonResponse(response);
         final reply = (json['reply'] as String? ?? '').trim();
         if (reply.isNotEmpty) {
           return reply;
@@ -360,7 +376,7 @@ class MealAnalysisService {
       throw Exception('Meal analysis failed with status ${response.statusCode}');
     }
 
-    final json = jsonDecode(response.body) as Map<String, dynamic>;
+    final json = _decodeJsonResponse(response);
     return MealAnalysisSuggestion(
       summary: json['summary'] as String,
       estimatedCalories: json['estimatedCalories'] as int,
@@ -441,7 +457,7 @@ class MealAnalysisService {
     }
     stopwatch.stop();
 
-    final json = jsonDecode(response.body) as Map<String, dynamic>;
+    final json = _decodeJsonResponse(response);
     final outputText = _extractOpenAiOutputText(json);
     if (outputText.isEmpty) {
       throw Exception('OpenAI returned no output_text');

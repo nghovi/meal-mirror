@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import '../models/meal_entry.dart';
@@ -53,7 +55,7 @@ class _MiraChatPageState extends State<MiraChatPage> {
     }
 
     final restored = saved
-        .map(_ChatMessage.fromMap)
+        .map((item) => _ChatMessage.fromMap(_repairMessageMap(item)))
         .where((message) => message.text.trim().isNotEmpty)
         .toList();
 
@@ -96,6 +98,10 @@ class _MiraChatPageState extends State<MiraChatPage> {
         message: message,
         recentEntries: widget.recentEntries,
         dietGoalBrief: widget.dietGoalBrief,
+        conversationMessages: _messages
+            .take(_messages.length - 1)
+            .map((message) => message.toMap())
+            .toList(),
       );
 
       if (!mounted) {
@@ -103,7 +109,7 @@ class _MiraChatPageState extends State<MiraChatPage> {
       }
 
       setState(() {
-        _messages.add(_ChatMessage.coach(reply));
+        _messages.add(_ChatMessage.coach(_repairMojibake(reply)));
         _isSending = false;
       });
       await _persistMessages();
@@ -123,6 +129,27 @@ class _MiraChatPageState extends State<MiraChatPage> {
       });
       await _persistMessages();
       _scrollToBottom();
+    }
+  }
+
+  Map<String, dynamic> _repairMessageMap(Map<String, dynamic> item) {
+    final repaired = Map<String, dynamic>.from(item);
+    final text = repaired['text'];
+    if (text is String) {
+      repaired['text'] = _repairMojibake(text);
+    }
+    return repaired;
+  }
+
+  String _repairMojibake(String text) {
+    if (!text.contains('â') && !text.contains('Ã') && !text.contains('Â')) {
+      return text;
+    }
+
+    try {
+      return utf8.decode(latin1.encode(text));
+    } catch (_) {
+      return text;
     }
   }
 
@@ -397,12 +424,54 @@ class _TypingBubble extends StatelessWidget {
           color: Colors.white,
           borderRadius: BorderRadius.circular(20),
         ),
-        child: const SizedBox(
-          width: 18,
-          height: 18,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
+        child: const _TypingDots(),
       ),
+    );
+  }
+}
+
+class _TypingDots extends StatefulWidget {
+  const _TypingDots();
+
+  @override
+  State<_TypingDots> createState() => _TypingDotsState();
+}
+
+class _TypingDotsState extends State<_TypingDots>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: List.generate(3, (index) {
+            final phase = (_controller.value - (index * 0.16)).clamp(0.0, 1.0);
+            final opacity = 0.28 + ((1 - (phase - 0.5).abs() * 2) * 0.72);
+            return Container(
+              width: 8,
+              height: 8,
+              margin: EdgeInsets.only(right: index == 2 ? 0 : 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFF8E6F5C).withValues(alpha: opacity),
+                shape: BoxShape.circle,
+              ),
+            );
+          }),
+        );
+      },
     );
   }
 }

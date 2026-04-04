@@ -1,8 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
+import 'dart:math' as math;
 
 import 'package:http/http.dart' as http;
+import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -126,9 +127,25 @@ class MealRepository {
 
     final directory = await getApplicationDocumentsDirectory();
     final fileName = '${DateTime.now().millisecondsSinceEpoch}_${file.name}';
-    final storedFile = File('${directory.path}/$fileName');
-    final copiedFile = await File(file.path).copy(storedFile.path);
-    return copiedFile.path;
+    final storedFile = File('${directory.path}/$fileName.jpg');
+    final sourceBytes = await File(file.path).readAsBytes();
+    final decoded = img.decodeImage(sourceBytes);
+    if (decoded == null) {
+      final copiedFile = await File(file.path).copy(storedFile.path);
+      return copiedFile.path;
+    }
+
+    final size = math.min(decoded.width, decoded.height);
+    final cropped = img.copyCrop(
+      decoded,
+      x: ((decoded.width - size) / 2).round(),
+      y: ((decoded.height - size) / 2).round(),
+      width: size,
+      height: size,
+    );
+    final encoded = img.encodeJpg(cropped, quality: 90);
+    await storedFile.writeAsBytes(encoded, flush: true);
+    return storedFile.path;
   }
 
   Future<List<String>> persistPickedImages(List<XFile> files) async {
@@ -597,7 +614,7 @@ class MealRepository {
       return existing;
     }
 
-    final random = Random.secure();
+    final random = math.Random.secure();
     final bytes = List<int>.generate(16, (_) => random.nextInt(256));
     final deviceId =
         bytes.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();

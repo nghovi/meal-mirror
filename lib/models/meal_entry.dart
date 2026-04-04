@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:flutter/material.dart';
+
 enum MealType { breakfast, lunch, dinner, snack, drink }
 
 extension MealTypeX on MealType {
@@ -23,6 +25,21 @@ extension MealTypeX on MealType {
       (type) => type.name == value,
       orElse: () => MealType.snack,
     );
+  }
+
+  IconData get icon {
+    switch (this) {
+      case MealType.breakfast:
+        return Icons.wb_sunny_outlined;
+      case MealType.lunch:
+        return Icons.ramen_dining_outlined;
+      case MealType.dinner:
+        return Icons.nightlight_round;
+      case MealType.snack:
+        return Icons.cookie_outlined;
+      case MealType.drink:
+        return Icons.local_drink_outlined;
+    }
   }
 }
 
@@ -69,6 +86,7 @@ class MealEntry {
 
   int get displayCalories => userEditedCalories ?? aiSuggestedCalories;
   int get totalEstimatedCalories => aiSuggestedCalories;
+  bool get isDrink => mealType == MealType.drink;
   int get userEstimatedCalories {
     final baseCalories = userEditedCalories ?? aiSuggestedCalories;
     if (!isSharedMeal) {
