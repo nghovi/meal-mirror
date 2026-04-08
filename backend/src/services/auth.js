@@ -33,10 +33,10 @@ export async function createPhoneUser({ phoneNumber, password, displayName }) {
     String(displayName || "").trim() || `Meal Mirror ${phoneNumber.slice(-4)}`;
 
   const [result] = await pool.query(
-    `insert into users (
-       sync_key, display_name, phone_number, password_hash, auth_provider
+     `insert into users (
+       sync_key, display_name, phone_number, password_hash, auth_provider, trial_started_at
      )
-     values (null, ?, ?, ?, 'phone')`,
+     values (null, ?, ?, ?, 'phone', utc_timestamp())`,
     [normalizedDisplayName, phoneNumber, passwordHash]
   );
 

@@ -111,6 +111,7 @@ async function syncNormalizedDataForUser(connection, userId, snapshot, deviceId)
   await syncDietGoal(connection, userId, snapshot.dietGoal);
   await syncMeals(connection, userId, deviceId, snapshot.entries);
   await syncMiraMessages(connection, userId, snapshot.miraMessages);
+  await syncFoodWords(connection, userId, snapshot.savedWords);
 }
 
 async function ensureUserAndDevice(connection, deviceId) {
@@ -272,6 +273,50 @@ async function syncMiraMessages(connection, userId, messages) {
         index,
         message.isUser ? "user" : "assistant",
         String(message.text || "")
+      ]
+    );
+  }
+}
+
+async function syncFoodWords(connection, userId, words) {
+  const savedWords = Array.isArray(words) ? words : [];
+
+  await connection.query(`delete from food_words where user_id = ?`, [userId]);
+
+  for (const word of savedWords) {
+    const term = String(word.term || "").trim();
+    if (!term) {
+      continue;
+    }
+
+    await connection.query(
+        `insert into food_words (
+          user_id,
+          external_word_id,
+          term,
+          normalized_term,
+          category,
+          definition,
+          examples_json,
+          image_hint,
+          source_image_url,
+          source_summary,
+          source_meal_id,
+          word_created_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        userId,
+        String(word.id || randomUUID()),
+        term,
+        term.toLowerCase(),
+        String(word.category || "Food"),
+        String(word.definition || word.note || ""),
+        JSON.stringify(Array.isArray(word.examples) ? word.examples : []),
+        String(word.imageHint || ""),
+        String(word.sourceImagePath || ""),
+        String(word.sourceSummary || ""),
+        word.sourceMealId == null ? null : String(word.sourceMealId),
+        toMysqlDateTime(word.createdAt)
       ]
     );
   }

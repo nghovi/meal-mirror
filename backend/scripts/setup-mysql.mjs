@@ -41,6 +41,7 @@ await connection.query(`
     phone_number varchar(20) null unique,
     password_hash varchar(255) null,
     auth_provider varchar(20) not null default 'device',
+    trial_started_at datetime not null default current_timestamp,
     created_at timestamp default current_timestamp,
     updated_at timestamp default current_timestamp on update current_timestamp
   );
@@ -164,6 +165,43 @@ await connection.query(`
       foreign key (conversation_id) references mira_conversations(id)
       on delete cascade
   );
+
+  create table if not exists food_words (
+    id bigint primary key auto_increment,
+    user_id bigint not null,
+    external_word_id varchar(191) not null,
+    term varchar(120) not null,
+    normalized_term varchar(120) not null,
+    category varchar(32) not null default 'Food',
+    definition text not null,
+    examples_json json not null,
+    image_hint varchar(191) not null default '',
+    source_image_url text not null,
+    source_summary text not null,
+    source_meal_id varchar(191) null,
+    word_created_at datetime not null,
+    created_at timestamp default current_timestamp,
+    updated_at timestamp default current_timestamp on update current_timestamp,
+    unique key uq_food_words_user_external (user_id, external_word_id),
+    key idx_food_words_user_term (user_id, normalized_term),
+    constraint fk_food_words_user_id
+      foreign key (user_id) references users(id)
+      on delete cascade
+  );
+
+  create table if not exists ai_daily_usage (
+    id bigint primary key auto_increment,
+    user_id bigint not null,
+    usage_date date not null,
+    analyze_meal_count int not null default 0,
+    coach_chat_count int not null default 0,
+    created_at timestamp default current_timestamp,
+    updated_at timestamp default current_timestamp on update current_timestamp,
+    unique key uq_ai_daily_usage_user_date (user_id, usage_date),
+    constraint fk_ai_daily_usage_user_id
+      foreign key (user_id) references users(id)
+      on delete cascade
+  );
 `);
 
 await connection.query(`
@@ -215,6 +253,41 @@ if (!(await hasColumn("users", "auth_provider"))) {
   await connection.query(`
     alter table users
       add column auth_provider varchar(20) not null default 'device' after password_hash
+  `);
+}
+
+if (!(await hasColumn("users", "trial_started_at"))) {
+  await connection.query(`
+    alter table users
+      add column trial_started_at datetime not null default current_timestamp after auth_provider
+  `);
+}
+
+if ((await hasColumn("food_words", "note")) && !(await hasColumn("food_words", "definition"))) {
+  await connection.query(`
+    alter table food_words
+      change column note definition text not null
+  `);
+}
+
+if (!(await hasColumn("food_words", "examples_json"))) {
+  await connection.query(`
+    alter table food_words
+      add column examples_json json not null after definition
+  `);
+}
+
+if (!(await hasColumn("food_words", "image_hint"))) {
+  await connection.query(`
+    alter table food_words
+      add column image_hint varchar(191) not null default '' after examples_json
+  `);
+}
+
+if (!(await hasColumn("food_words", "source_image_url"))) {
+  await connection.query(`
+    alter table food_words
+      add column source_image_url text not null after image_hint
   `);
 }
 

@@ -51,6 +51,7 @@ class AuthService extends ChangeNotifier {
 
   static const _storage = FlutterSecureStorage();
   static const _sessionStorageKey = 'meal_mirror_auth_session_v1';
+  static const _lastPhoneStorageKey = 'meal_mirror_last_phone_v1';
 
   final http.Client _client;
   final String _apiBaseUrl;
@@ -64,6 +65,10 @@ class AuthService extends ChangeNotifier {
   bool get isLoading => _isLoading;
   bool get hasLoaded => _hasLoaded;
   String get authToken => _session?.token ?? '';
+
+  Future<String> loadLastPhoneNumber() async {
+    return (await _storage.read(key: _lastPhoneStorageKey)) ?? '';
+  }
 
   Future<void> loadSession() async {
     if (_hasLoaded) {
@@ -188,6 +193,10 @@ class AuthService extends ChangeNotifier {
     await _storage.write(
       key: _sessionStorageKey,
       value: jsonEncode(session.toMap()),
+    );
+    await _storage.write(
+      key: _lastPhoneStorageKey,
+      value: session.phoneNumber,
     );
     notifyListeners();
   }

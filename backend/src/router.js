@@ -14,6 +14,7 @@ import {
   writeUserSnapshot
 } from "./services/sync.js";
 import { serveUpload, storeUpload } from "./services/uploads.js";
+import { ApiUsageError, assertCanUseAi, recordAiUsage } from "./services/trial.js";
 import { sendJson, readJson, requestBaseUrl } from "./http/response.js";
 import { sanitizeDeviceId } from "./utils/security.js";
 
@@ -136,15 +137,32 @@ export async function handleRequest(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/analyze-meal") {
-    return respond(res, 500, async () => analyzeMeal(await readJson(req)));
+    return respond(res, 500, async () => {
+      const { user } = await requireAuthenticatedUser(req);
+      const body = await readJson(req);
+      await assertCanUseAi({ userId: user.id, action: "analyze_meal" });
+      const result = await analyzeMeal(body);
+      await recordAiUsage({ userId: user.id, action: "analyze_meal" });
+      return result;
+    }, authAwareStatus);
   }
 
   if (req.method === "POST" && url.pathname === "/diet-goal-brief") {
-    return respond(res, 500, async () => createDietGoalBrief(await readJson(req)));
+    return respond(res, 500, async () => {
+      await requireAuthenticatedUser(req);
+      return createDietGoalBrief(await readJson(req));
+    }, authAwareStatus);
   }
 
   if (req.method === "POST" && url.pathname === "/coach-chat") {
-    return respond(res, 500, async () => coachChat(await readJson(req)));
+    return respond(res, 500, async () => {
+      const { user } = await requireAuthenticatedUser(req);
+      const body = await readJson(req);
+      await assertCanUseAi({ userId: user.id, action: "coach_chat" });
+      const result = await coachChat(body);
+      await recordAiUsage({ userId: user.id, action: "coach_chat" });
+      return result;
+    }, authAwareStatus);
   }
 
   sendJson(res, 404, { error: "Not found" });
@@ -168,6 +186,9 @@ function defaultStatus(_error, fallbackStatus) {
 }
 
 function authAwareStatus(error, fallbackStatus) {
+  if (error instanceof ApiUsageError) {
+    return error.status;
+  }
   if (
     error instanceof Error &&
     (error.message === "Authentication required" ||

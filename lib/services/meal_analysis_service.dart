@@ -5,6 +5,21 @@ import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 
 import '../models/meal_entry.dart';
+import 'auth_service.dart';
+
+class DictionaryEntry {
+  const DictionaryEntry({
+    required this.definition,
+    required this.examples,
+    this.imageUrl,
+    required this.category,
+  });
+
+  final String definition;
+  final List<String> examples;
+  final String? imageUrl;
+  final String category;
+}
 
 class MealAnalysisSuggestion {
   const MealAnalysisSuggestion({
@@ -50,12 +65,14 @@ class MealAnalysisService {
     String? apiKey,
     String? model,
   })  : _client = client ?? http.Client(),
+        _authService = AuthService.instance,
         _apiBaseUrl = apiBaseUrl ??
             const String.fromEnvironment('MEAL_MIRROR_API_BASE_URL'),
         _apiKey = apiKey ?? const String.fromEnvironment('OPENAI_API_KEY'),
         _model = model ?? const String.fromEnvironment('OPENAI_MODEL', defaultValue: 'gpt-4.1-mini');
 
   final http.Client _client;
+  final AuthService _authService;
   final String _apiBaseUrl;
   final String _apiKey;
   final String _model;
@@ -64,6 +81,27 @@ class MealAnalysisService {
 
   Map<String, dynamic> _decodeJsonResponse(http.Response response) {
     return jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+  }
+
+  Exception _backendException(http.Response response, String fallbackMessage) {
+    try {
+      final payload = _decodeJsonResponse(response);
+      final error = (payload['error'] as String?)?.trim();
+      if (error != null && error.isNotEmpty) {
+        return Exception(error);
+      }
+    } catch (_) {
+      // ignore JSON parsing failure and use fallback below
+    }
+    return Exception(fallbackMessage);
+  }
+
+  Map<String, String> _backendJsonHeaders() {
+    return {
+      'Content-Type': 'application/json',
+      if (_authService.isAuthenticated)
+        'Authorization': 'Bearer ${_authService.authToken}',
+    };
   }
 
   Future<MealAnalysisSuggestion> analyzeMeal({
@@ -299,12 +337,12 @@ class MealAnalysisService {
     try {
       final response = await _client.post(
         Uri.parse('$_apiBaseUrl/diet-goal-brief'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _backendJsonHeaders(),
         body: jsonEncode({'mission': normalized}),
       );
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        return _fallbackGoalBrief(normalized);
+        throw _backendException(response, 'Could not save your goal brief.');
       }
 
       final json = _decodeJsonResponse(response);
@@ -325,7 +363,7 @@ class MealAnalysisService {
     try {
       final response = await _client.post(
         Uri.parse('$_apiBaseUrl/coach-chat'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _backendJsonHeaders(),
         body: jsonEncode({
           'message': message,
           'dietGoalBrief': dietGoalBrief,
@@ -335,22 +373,19 @@ class MealAnalysisService {
         }),
       );
 
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final json = _decodeJsonResponse(response);
-        final reply = (json['reply'] as String? ?? '').trim();
-        if (reply.isNotEmpty) {
-          return reply;
-        }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw _backendException(response, 'Mira could not reply right now.');
       }
-    } catch (_) {
-      // Fall back locally below.
-    }
 
-    return _fallbackCoachReply(
-      message: message,
-      recentEntries: recentEntries,
-      dietGoalBrief: dietGoalBrief,
-    );
+      final json = _decodeJsonResponse(response);
+      final reply = (json['reply'] as String? ?? '').trim();
+      if (reply.isNotEmpty) {
+        return reply;
+      }
+      throw Exception('Mira returned an empty reply.');
+    } catch (error) {
+      throw Exception(error.toString().replaceFirst('Exception: ', ''));
+    }
   }
 
   Future<MealAnalysisSuggestion> _analyzeWithBackend({
@@ -362,7 +397,7 @@ class MealAnalysisService {
   }) async {
     final response = await _client.post(
       Uri.parse('$_apiBaseUrl/analyze-meal'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _backendJsonHeaders(),
       body: jsonEncode({
         'mealType': mealType.name,
         'capturedAt': capturedAt.toIso8601String(),
@@ -373,7 +408,10 @@ class MealAnalysisService {
     );
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception('Meal analysis failed with status ${response.statusCode}');
+      throw _backendException(
+        response,
+        'Meal analysis failed with status ${response.statusCode}',
+      );
     }
 
     final json = _decodeJsonResponse(response);
@@ -491,7 +529,7 @@ class MealAnalysisService {
               : 'Breakfast meal with protein and carbs',
           estimatedCalories: count > 1 ? 520 : 420,
           review:
-              'Fallback analysis is active. Add your backend URL to enable real OpenAI meal review.',
+              'This is a quick estimate. You can adjust the meal details if needed.',
           debug: MealAnalysisDebug(
             imageCount: count,
             responseTimeMs: 0,
@@ -504,7 +542,7 @@ class MealAnalysisService {
               : 'Lunch plate with protein, carbs, and vegetables',
           estimatedCalories: count > 1 ? 760 : 610,
           review:
-              'Fallback analysis is active. Add your backend URL to enable real OpenAI meal review.',
+              'This is a quick estimate. You can adjust the meal details if needed.',
           debug: MealAnalysisDebug(
             imageCount: count,
             responseTimeMs: 0,
@@ -517,7 +555,7 @@ class MealAnalysisService {
               : 'Dinner meal with balanced portions',
           estimatedCalories: count > 1 ? 680 : 560,
           review:
-              'Fallback analysis is active. Add your backend URL to enable real OpenAI meal review.',
+              'This is a quick estimate. You can adjust the meal details if needed.',
           debug: MealAnalysisDebug(
             imageCount: count,
             responseTimeMs: 0,
@@ -528,7 +566,7 @@ class MealAnalysisService {
           summary: count > 1 ? 'Multiple snack items' : 'Snack portion',
           estimatedCalories: count > 1 ? 300 : 190,
           review:
-              'Fallback analysis is active. Add your backend URL to enable real OpenAI meal review.',
+              'This is a quick estimate. You can adjust the snack details if needed.',
           debug: MealAnalysisDebug(
             imageCount: count,
             responseTimeMs: 0,
@@ -539,7 +577,7 @@ class MealAnalysisService {
           summary: count > 1 ? 'Multiple drinks' : 'Drink',
           estimatedCalories: count > 1 ? 120 : 0,
           review:
-              'Fallback analysis is active. Add your backend URL to enable real OpenAI meal review.',
+              'This is a quick estimate. You can adjust the drink details if needed.',
           detectedMealType: MealType.drink,
           debug: MealAnalysisDebug(
             imageCount: count,
@@ -582,6 +620,76 @@ class MealAnalysisService {
       return compact;
     }
     return '${compact.substring(0, 157)}...';
+  }
+
+  Future<DictionaryEntry?> fetchWordDefinitionAndImage(String term) async {
+    String definition = '';
+    List<String> examples = [];
+    String category = 'Food';
+    String? imageUrl;
+
+    try {
+      final dictResponse = await _client.get(
+        Uri.parse('https://api.dictionaryapi.dev/api/v2/entries/en/${Uri.encodeComponent(term.trim().toLowerCase())}'),
+      );
+      if (dictResponse.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(dictResponse.body);
+        if (data.isNotEmpty) {
+          final entry = data[0];
+          final meanings = entry['meanings'] as List<dynamic>? ?? [];
+          if (meanings.isNotEmpty) {
+            final meaning = meanings[0];
+            final partOfSpeech = meaning['partOfSpeech'] as String? ?? 'noun';
+            category = '${partOfSpeech[0].toUpperCase()}${partOfSpeech.substring(1)}';
+
+            final definitions = meaning['definitions'] as List<dynamic>? ?? [];
+            if (definitions.isNotEmpty) {
+              final defItem = definitions[0];
+              definition = defItem['definition'] as String? ?? '';
+              final String? example = defItem['example'] as String?;
+              if (example != null && example.isNotEmpty) {
+                examples.add(example);
+              }
+            }
+          }
+        }
+      }
+    } catch (_) {
+      // Best effort dictionary lookup
+    }
+
+    try {
+      final wikiResponse = await _client.get(
+        Uri.parse('https://en.wikipedia.org/w/api.php?action=query&titles=${Uri.encodeComponent(term.trim())}&prop=pageimages&format=json&pithumbsize=500'),
+      );
+      if (wikiResponse.statusCode == 200) {
+        final data = jsonDecode(wikiResponse.body);
+        final pages = data['query']?['pages'] as Map<String, dynamic>?;
+        if (pages != null && pages.isNotEmpty) {
+          final pageId = pages.keys.first;
+          if (pageId != '-1') {
+            final page = pages[pageId];
+            final thumbnail = page['thumbnail'];
+            if (thumbnail != null) {
+              imageUrl = thumbnail['source'] as String?;
+            }
+          }
+        }
+      }
+    } catch (_) {
+      // Best effort image lookup
+    }
+
+    if (definition.isEmpty && imageUrl == null) {
+      return null;
+    }
+
+    return DictionaryEntry(
+      definition: definition,
+      examples: examples,
+      imageUrl: imageUrl,
+      category: category,
+    );
   }
 
   String _fallbackCoachReply({

@@ -24,12 +24,27 @@ class _AuthPageState extends State<AuthPage> {
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    _loadLastPhoneNumber();
+  }
+
+  @override
   void dispose() {
     _phoneController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
     _displayNameController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadLastPhoneNumber() async {
+    final phoneNumber = await widget.authService.loadLastPhoneNumber();
+    if (!mounted || phoneNumber.trim().isEmpty) {
+      return;
+    }
+
+    _phoneController.text = phoneNumber;
   }
 
   Future<void> _submit() async {
@@ -201,6 +216,10 @@ class _AuthPageState extends State<AuthPage> {
                                 _isRegistering
                                     ? 'Already have an account? Sign in'
                                     : 'New here? Create an account',
+                                style: const TextStyle(
+                                  color: Color(0xFF2E6FD8),
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
                             ),
                           ),

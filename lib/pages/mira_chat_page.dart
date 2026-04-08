@@ -114,7 +114,8 @@ class _MiraChatPageState extends State<MiraChatPage> {
       });
       await _persistMessages();
       _scrollToBottom();
-    } catch (_) {
+    } catch (error) {
+      final message = error.toString().replaceFirst('Exception: ', '').trim();
       if (!mounted) {
         return;
       }
@@ -122,7 +123,9 @@ class _MiraChatPageState extends State<MiraChatPage> {
       setState(() {
         _messages.add(
           _ChatMessage.coach(
-            'I could not reply right now. Please try again in a moment.',
+            message.isNotEmpty
+                ? message
+                : 'I could not reply right now. Please try again in a moment.',
           ),
         );
         _isSending = false;
@@ -265,8 +268,8 @@ class _MiraChatPageState extends State<MiraChatPage> {
                       const SizedBox(height: 2),
                       Text(
                         widget.dietGoalBrief.isNotEmpty
-                            ? 'Your meal reflection coach is keeping your mission in mind.'
-                            : 'Your meal reflection coach can review recent food, drinks, and feelings with you.',
+                            ? 'Mira keeps your goal in mind while reviewing meals and drinks.'
+                            : 'Mira can review your recent meals, drinks, and how they felt.',
                         style: const TextStyle(
                           color: Colors.white70,
                           fontSize: 12,
