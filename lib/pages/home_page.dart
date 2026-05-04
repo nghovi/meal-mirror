@@ -2,16 +2,21 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:latlong2/latlong.dart';
 
 import '../models/diet_goal.dart';
 import '../models/food_word.dart';
 import '../models/meal_entry.dart';
 import '../models/review_period.dart';
+import '../models/weekly_meal_plan.dart';
 import 'food_words_page.dart';
 import 'mira_chat_page.dart';
+import 'profile_page.dart';
 import '../services/meal_analysis_service.dart';
 import '../services/auth_service.dart';
+import '../services/location_service.dart';
 import '../services/meal_repository.dart';
 
 class HomePage extends StatefulWidget {
@@ -25,25 +30,48 @@ class _HomePageState extends State<HomePage> {
   final AuthService _authService = AuthService.instance;
   final MealRepository _repository = MealRepository();
   final MealAnalysisService _analysisService = MealAnalysisService();
+  final LocationService _locationService = LocationService();
   final ImagePicker _picker = ImagePicker();
 
   List<MealEntry> _entries = const [];
   List<FoodWord> _savedWords = const [];
   DietGoal? _dietGoal;
+  WeeklyMealPlan? _weeklyMealPlan;
   ReviewPeriod _period = ReviewPeriod.day;
   DateTime _referenceDate = DateTime.now();
   bool _isLoading = true;
   bool _isSaving = false;
   bool _isSavingGoal = false;
-  bool _isLoggingOut = false;
+  bool _isGeneratingWeeklyPlan = false;
 
   @override
   void initState() {
     super.initState();
-    _loadEntries();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadEntries();
+    });
   }
 
   Future<void> _loadEntries() async {
+    final cachedSnapshot = await _repository.loadCachedAppState();
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _entries = [...cachedSnapshot.entries]
+        ..sort((a, b) => b.capturedAt.compareTo(a.capturedAt));
+      _savedWords = [...cachedSnapshot.savedWords]
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      _dietGoal = cachedSnapshot.dietGoal;
+      _weeklyMealPlan = cachedSnapshot.weeklyMealPlan;
+      _isLoading = false;
+    });
+
+    unawaited(_refreshEntriesFromSync());
+  }
+
+  Future<void> _refreshEntriesFromSync() async {
     final snapshot = await _repository.loadAppState();
     if (!mounted) {
       return;
@@ -55,7 +83,7 @@ class _HomePageState extends State<HomePage> {
       _savedWords = [...snapshot.savedWords]
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
       _dietGoal = snapshot.dietGoal;
-      _isLoading = false;
+      _weeklyMealPlan = snapshot.weeklyMealPlan;
     });
   }
 
@@ -168,7 +196,8 @@ class _HomePageState extends State<HomePage> {
                 },
                 onDrinkTap: ({required summary, required volumeMl}) async {
                   Navigator.of(context).pop();
-                  await _quickDrinkCapture(summary: summary, volumeMl: volumeMl);
+                  await _quickDrinkCapture(
+                      summary: summary, volumeMl: volumeMl);
                 },
                 onRecentTap: (entry) {
                   Navigator.of(context).pop();
@@ -220,44 +249,15 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
-  Future<void> _logout() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Log out?'),
-        content: const Text(
-          'You will stay synced on the server, but this device will return to the sign-in screen.',
+  Future<void> _openProfile() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => ProfilePage(
+          authService: _authService,
+          repository: _repository,
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Stay here'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Log out'),
-          ),
-        ],
       ),
     );
-
-    if (confirmed != true || !mounted) {
-      return;
-    }
-
-    setState(() {
-      _isLoggingOut = true;
-    });
-
-    try {
-      await _authService.logout();
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoggingOut = false;
-        });
-      }
-    }
   }
 
   Future<void> _openFoodWords() async {
@@ -308,7 +308,10 @@ class _HomePageState extends State<HomePage> {
       backgroundColor: Colors.white,
       builder: (context) => _FoodWordPickerSheet(
         suggestions: suggestions,
-        alreadySavedTerms: _savedWords.map((word) => word.term).toSet(),
+        alreadySavedTerms: _savedWords
+            .map((word) => _normalizeWordTerm(word.term))
+            .where((term) => term.isNotEmpty)
+            .toSet(),
       ),
     );
 
@@ -361,16 +364,61 @@ class _HomePageState extends State<HomePage> {
       }
     });
 
-    final tokens = RegExp(r"[a-zA-Z][a-zA-Z-]{3,}")
+    final rawTokens = RegExp(r"[a-zA-Z][a-zA-Z-]{3,}")
         .allMatches(summary)
         .map((match) => match.group(0)!)
         .toList();
-    for (final token in tokens) {
-      final normalized = token.toLowerCase();
-      if (_wordStoplist.contains(normalized) ||
-          _foodWordGlossary.containsKey(normalized)) {
+    final tokenFrequency = <String, int>{};
+    final tokenFirstIndex = <String, int>{};
+    for (var index = 0; index < rawTokens.length; index += 1) {
+      final normalized = _normalizeWordTerm(rawTokens[index]);
+      if (normalized.isEmpty) {
         continue;
       }
+      tokenFrequency.update(
+        normalized,
+        (value) => value + 1,
+        ifAbsent: () => 1,
+      );
+      tokenFirstIndex.putIfAbsent(normalized, () => index);
+    }
+
+    final rankedTokens = tokenFrequency.keys
+        .where(
+          (normalized) =>
+              !_wordStoplist.contains(normalized) &&
+              !_foodWordGlossary.containsKey(normalized),
+        )
+        .toList()
+      ..sort((a, b) {
+        final scoreDiff = _foodWordPriorityScore(
+          token: b,
+          frequency: tokenFrequency[b] ?? 1,
+        ).compareTo(
+          _foodWordPriorityScore(
+            token: a,
+            frequency: tokenFrequency[a] ?? 1,
+          ),
+        );
+        if (scoreDiff != 0) {
+          return scoreDiff;
+        }
+
+        final frequencyDiff =
+            (tokenFrequency[b] ?? 1).compareTo(tokenFrequency[a] ?? 1);
+        if (frequencyDiff != 0) {
+          return frequencyDiff;
+        }
+
+        final lengthDiff = b.length.compareTo(a.length);
+        if (lengthDiff != 0) {
+          return lengthDiff;
+        }
+
+        return (tokenFirstIndex[a] ?? 0).compareTo(tokenFirstIndex[b] ?? 0);
+      });
+
+    for (final normalized in rankedTokens) {
       addSuggestion(
         term: _displayTerm(normalized),
         category: 'Food',
@@ -391,11 +439,23 @@ class _HomePageState extends State<HomePage> {
     List<_WordSuggestion> selected,
   ) async {
     final existingTerms =
-        _savedWords.map((word) => word.term.toLowerCase()).toSet();
-        
+        _savedWords.map((word) => _normalizeWordTerm(word.term)).toSet();
+
     final newSuggestions = selected
-        .where((s) => !existingTerms.contains(s.term.toLowerCase()))
+        .where((s) => !existingTerms.contains(_normalizeWordTerm(s.term)))
         .toList();
+
+    if (newSuggestions.isEmpty) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Those words are already in your word list.'),
+        ),
+      );
+      return;
+    }
 
     if (newSuggestions.isNotEmpty) {
       showDialog(
@@ -409,7 +469,8 @@ class _HomePageState extends State<HomePage> {
               children: [
                 CircularProgressIndicator(color: Colors.white),
                 SizedBox(height: 16),
-                Text('Defining words...', style: TextStyle(color: Colors.white, fontSize: 16)),
+                Text('Defining words...',
+                    style: TextStyle(color: Colors.white, fontSize: 16)),
               ],
             ),
           ),
@@ -420,19 +481,22 @@ class _HomePageState extends State<HomePage> {
     final newlyAddedWords = <FoodWord>[];
     for (final suggestion in newSuggestions) {
       final terms = suggestion.term.toLowerCase();
-      final dictEntry = await _analysisService.fetchWordDefinitionAndImage(suggestion.term);
-      
+      final dictEntry =
+          await _analysisService.fetchWordDefinitionAndImage(suggestion.term);
+
       newlyAddedWords.add(
         FoodWord(
           id: '${DateTime.now().microsecondsSinceEpoch}-$terms',
           term: suggestion.term,
           category: dictEntry?.category ?? suggestion.category,
-          definition: dictEntry != null && dictEntry.definition.isNotEmpty 
-              ? dictEntry.definition 
+          definition: dictEntry != null && dictEntry.definition.isNotEmpty
+              ? dictEntry.definition
               : '${_displayTerm(suggestion.term)} is a food-related word from your meal log.',
-          examples: dictEntry != null && dictEntry.examples.isNotEmpty 
-              ? dictEntry.examples 
+          examples: dictEntry != null && dictEntry.examples.isNotEmpty
+              ? dictEntry.examples
               : suggestion.examples,
+          pronunciation: dictEntry?.pronunciation,
+          pronunciationAudioUrl: dictEntry?.pronunciationAudioUrl,
           imageHint: suggestion.imageHint,
           sourceImagePath: dictEntry?.imageUrl ??
               (entry.imagePaths.isNotEmpty ? entry.imagePaths.first : ''),
@@ -475,9 +539,9 @@ class _HomePageState extends State<HomePage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            selected.length == 1
+            newSuggestions.length == 1
                 ? 'Saved 1 new word.'
-                : 'Saved ${selected.length} new words.',
+                : 'Saved ${newSuggestions.length} new words.',
           ),
         ),
       );
@@ -530,8 +594,7 @@ class _HomePageState extends State<HomePage> {
         userPortionPercent: draft.userPortionPercent,
         tags: _deriveTags(draft),
         imagePaths: imagePaths,
-        userEditedSummary:
-            draft.summaryWasEdited ? draft.summaryInput : null,
+        userEditedSummary: draft.summaryWasEdited ? draft.summaryInput : null,
         userEditedCalories: null,
       );
 
@@ -565,7 +628,8 @@ class _HomePageState extends State<HomePage> {
       });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Could not save this meal right now. Please try again.'),
+          content:
+              Text('Could not save this meal right now. Please try again.'),
         ),
       );
     }
@@ -646,10 +710,9 @@ class _HomePageState extends State<HomePage> {
         existing.displaySummary.trim() != draft.summaryInput.trim();
     final mealTypeChanged = existing.mealType != draft.mealType;
     final drinkVolumeChanged = existing.drinkVolumeMl != draft.drinkVolumeMl;
-    final sharedMealChanged =
-        existing.isSharedMeal != draft.isSharedMeal ||
-            existing.sharedMealPeopleCount != draft.sharedMealPeopleCount ||
-            existing.userPortionPercent != draft.userPortionPercent;
+    final sharedMealChanged = existing.isSharedMeal != draft.isSharedMeal ||
+        existing.sharedMealPeopleCount != draft.sharedMealPeopleCount ||
+        existing.userPortionPercent != draft.userPortionPercent;
     final imagesChanged = !_sameItems(
       existing.imagePaths,
       [
@@ -681,6 +744,7 @@ class _HomePageState extends State<HomePage> {
 
     return true;
   }
+
   Future<List<String>> _persistMealImages(
     _MealDraft draft,
     MealEntry? existing,
@@ -799,6 +863,93 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Future<void> _generateWeeklyMealPlan({bool regenerate = false}) async {
+    final selection = await showModalBottomSheet<LocationSelection>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: Colors.white,
+      builder: (context) => _WeeklyMealPlanLocationSheet(
+        initialSelection: LocationSelection(
+          label: _weeklyMealPlan?.location ?? '',
+          latitude: _weeklyMealPlan?.latitude ?? 10.7769,
+          longitude: _weeklyMealPlan?.longitude ?? 106.7009,
+        ),
+        isRegenerating: regenerate,
+        locationService: _locationService,
+      ),
+    );
+
+    if (selection == null || !mounted) {
+      return;
+    }
+
+    final trimmedLocation = selection.label.trim();
+    if (trimmedLocation.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter your location first.')),
+      );
+      return;
+    }
+
+    setState(() {
+      _isGeneratingWeeklyPlan = true;
+    });
+
+    try {
+      final now = DateTime.now();
+      final monday = DateTime(now.year, now.month, now.day)
+          .subtract(Duration(days: now.weekday - 1));
+      final generatedPlan = await _analysisService.createWeeklyMealPlan(
+        location: trimmedLocation,
+        dietGoal: _dietGoal?.mission ?? _dietGoal?.aiBrief ?? '',
+        startDate: monday,
+      );
+      final plan = generatedPlan.copyWith(
+        location: trimmedLocation,
+        latitude: selection.latitude,
+        longitude: selection.longitude,
+      );
+      await _repository.saveWeeklyMealPlan(plan);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _weeklyMealPlan = plan;
+        _isGeneratingWeeklyPlan = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isGeneratingWeeklyPlan = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            error.toString().replaceFirst('Exception: ', ''),
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _openWeeklyMealPlanSheet() async {
+    final plan = _weeklyMealPlan;
+    if (plan == null) {
+      return;
+    }
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: Colors.white,
+      builder: (context) => _WeeklyMealPlanSheet(plan: plan),
+    );
+  }
+
   Future<void> _pickReferenceDate() async {
     final picked = await showDatePicker(
       context: context,
@@ -839,8 +990,9 @@ class _HomePageState extends State<HomePage> {
     }).toList();
   }
 
-  List<MealEntry> get _dashboardEntries =>
-      _entries.where((entry) => _isSameDay(entry.capturedAt, _referenceDate)).toList();
+  List<MealEntry> get _dashboardEntries => _entries
+      .where((entry) => _isSameDay(entry.capturedAt, _referenceDate))
+      .toList();
 
   List<MealEntry> get _dashboardMealEntries =>
       _dashboardEntries.where((entry) => !entry.isDrink).toList();
@@ -1006,9 +1158,9 @@ class _HomePageState extends State<HomePage> {
         case ReviewPeriod.day:
           return _isSameDay(captured, referenceDate);
         case ReviewPeriod.week:
-          final weekStart =
-              DateTime(referenceDate.year, referenceDate.month, referenceDate.day)
-                  .subtract(Duration(days: referenceDate.weekday - 1));
+          final weekStart = DateTime(
+                  referenceDate.year, referenceDate.month, referenceDate.day)
+              .subtract(Duration(days: referenceDate.weekday - 1));
           final weekEnd = weekStart.add(const Duration(days: 7));
           return !captured.isBefore(weekStart) && captured.isBefore(weekEnd);
         case ReviewPeriod.month:
@@ -1027,9 +1179,11 @@ class _HomePageState extends State<HomePage> {
       case ReviewPeriod.week:
         return referenceDate.subtract(const Duration(days: 7));
       case ReviewPeriod.month:
-        return DateTime(referenceDate.year, referenceDate.month - 1, referenceDate.day);
+        return DateTime(
+            referenceDate.year, referenceDate.month - 1, referenceDate.day);
       case ReviewPeriod.year:
-        return DateTime(referenceDate.year - 1, referenceDate.month, referenceDate.day);
+        return DateTime(
+            referenceDate.year - 1, referenceDate.month, referenceDate.day);
     }
   }
 
@@ -1042,9 +1196,8 @@ class _HomePageState extends State<HomePage> {
   }) {
     switch (_period) {
       case ReviewPeriod.day:
-        final label = _isSameDay(_referenceDate, DateTime.now())
-            ? 'Today'
-            : 'This day';
+        final label =
+            _isSameDay(_referenceDate, DateTime.now()) ? 'Today' : 'This day';
         return '$label includes ${mealEntries.length} meal${mealEntries.length == 1 ? '' : 's'}'
             '${drinkEntries.isNotEmpty ? ' and ${drinkEntries.length} drink${drinkEntries.length == 1 ? '' : 's'}' : ''}, '
             'with meals averaging $averageCalories kcal.';
@@ -1085,7 +1238,7 @@ class _HomePageState extends State<HomePage> {
         if (drinkEntries.isNotEmpty && totalDrinkVolume >= 800) {
           return 'Hydration showed up clearly today, which helps round out the picture beyond calories alone.';
         }
-        return 'Today reads as fairly steady so far, with no single meal pattern dominating the whole day.';
+        return 'Today looks fairly balanced so far, without one meal standing out much more than the others.';
       case ReviewPeriod.week:
         if (lateMeals >= 3) {
           return 'Late eating showed up several times this week, so timing is becoming a real part of the pattern.';
@@ -1159,8 +1312,7 @@ class _HomePageState extends State<HomePage> {
           return 'Compared with the previous ${_period.label.toLowerCase()}, your average meal calories were $direction by about ${calorieDelta.abs()} kcal.';
         }
         if ((currentMeals - previousMeals).abs() >= 3) {
-          final direction =
-              currentMeals > previousMeals ? 'more' : 'fewer';
+          final direction = currentMeals > previousMeals ? 'more' : 'fewer';
           return 'Compared with the previous ${_period.label.toLowerCase()}, you logged $direction meals.';
         }
         return 'Compared with the previous ${_period.label.toLowerCase()}, your logging looks fairly steady.';
@@ -1412,16 +1564,26 @@ class _HomePageState extends State<HomePage> {
                                 ),
                               ),
                               PopupMenuButton<String>(
-                                enabled: !_isLoggingOut,
                                 onSelected: (value) {
                                   switch (value) {
+                                    case 'profile':
+                                      _openProfile();
                                     case 'words':
                                       _openFoodWords();
-                                    case 'logout':
-                                      _logout();
                                   }
                                 },
                                 itemBuilder: (context) => const [
+                                  PopupMenuItem(
+                                    value: 'profile',
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.person_outline_rounded,
+                                            size: 18),
+                                        SizedBox(width: 10),
+                                        Text('Profile'),
+                                      ],
+                                    ),
+                                  ),
                                   PopupMenuItem(
                                     value: 'words',
                                     child: Row(
@@ -1429,16 +1591,6 @@ class _HomePageState extends State<HomePage> {
                                         Icon(Icons.menu_book_rounded, size: 18),
                                         SizedBox(width: 10),
                                         Text('My food words'),
-                                      ],
-                                    ),
-                                  ),
-                                  PopupMenuItem(
-                                    value: 'logout',
-                                    child: Row(
-                                      children: [
-                                        Icon(Icons.logout_rounded, size: 18),
-                                        SizedBox(width: 10),
-                                        Text('Log out'),
                                       ],
                                     ),
                                   ),
@@ -1458,20 +1610,11 @@ class _HomePageState extends State<HomePage> {
                                   child: Row(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
-                                      if (_isLoggingOut)
-                                        const SizedBox(
-                                          width: 16,
-                                          height: 16,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                          ),
-                                        )
-                                      else
-                                        const Icon(
-                                          Icons.account_circle_outlined,
-                                          size: 16,
-                                          color: Color(0xFF7A5A45),
-                                        ),
+                                      const Icon(
+                                        Icons.account_circle_outlined,
+                                        size: 16,
+                                        color: Color(0xFF7A5A45),
+                                      ),
                                       const SizedBox(width: 6),
                                       ConstrainedBox(
                                         constraints: const BoxConstraints(
@@ -1483,7 +1626,8 @@ class _HomePageState extends State<HomePage> {
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
                                             Text(
-                                              _authService.session?.displayName ??
+                                              _authService
+                                                      .session?.displayName ??
                                                   'Account',
                                               maxLines: 1,
                                               overflow: TextOverflow.ellipsis,
@@ -1528,6 +1672,15 @@ class _HomePageState extends State<HomePage> {
                             onEdit: _editDietGoal,
                           ),
                           const SizedBox(height: 18),
+                          _WeeklyMealPlanCard(
+                            plan: _weeklyMealPlan,
+                            isGenerating: _isGeneratingWeeklyPlan,
+                            onGenerate: (regenerate) => _generateWeeklyMealPlan(
+                              regenerate: regenerate,
+                            ),
+                            onViewWeek: _openWeeklyMealPlanSheet,
+                          ),
+                          const SizedBox(height: 18),
                           _PeriodSelector(
                             selected: _period,
                             referenceDate: _referenceDate,
@@ -1546,9 +1699,12 @@ class _HomePageState extends State<HomePage> {
                             note: _coachNote,
                             period: _period,
                             onChat: _openMiraChat,
-                            picturesButtonLabel:
-                                _pictureEntries.isEmpty ? null : _picturesButtonLabel(),
-                            onPictures: _pictureEntries.isEmpty ? null : _openPicturesGallery,
+                            picturesButtonLabel: _pictureEntries.isEmpty
+                                ? null
+                                : _picturesButtonLabel(),
+                            onPictures: _pictureEntries.isEmpty
+                                ? null
+                                : _openPicturesGallery,
                           ),
                           const SizedBox(height: 24),
                           Text(
@@ -1849,21 +2005,42 @@ class _DietGoalCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hasGoal = goal != null && !goal!.isEmpty;
+    final theme = Theme.of(context);
 
     return Card(
+      color: const Color(0xFFFFFCF8),
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(24),
+        side: const BorderSide(
+          color: Color(0xFFF0C8AE),
+          width: 1.4,
+        ),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Expanded(
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 7,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFE8D7),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
                   child: Text(
-                    'Diet mission',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
+                    'Goal',
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: const Color(0xFFA14F2A),
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ),
                 TextButton(
@@ -1872,14 +2049,32 @@ class _DietGoalCard extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            Text(
-              hasGoal
-                  ? goal!.mission
-                  : 'Set your goal once so Meal Mirror can tailor meal feedback around what matters to you.',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: const Color(0xFF6E6257),
-                  ),
+            const SizedBox(height: 14),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: const Color(0xFFF2DDD0),
+                ),
+              ),
+              child: Text(
+                hasGoal
+                    ? goal!.mission
+                    : 'Set a clear diet goal so every review has a stronger target to measure against.',
+                style: (hasGoal
+                        ? theme.textTheme.titleMedium
+                        : theme.textTheme.bodyMedium)
+                    ?.copyWith(
+                      color: hasGoal
+                          ? const Color(0xFF35281F)
+                          : const Color(0xFF6E6257),
+                      fontWeight: hasGoal ? FontWeight.w700 : FontWeight.w500,
+                      height: 1.35,
+                    ),
+              ),
             ),
             if (isSaving) ...[
               const SizedBox(height: 12),
@@ -1894,8 +2089,8 @@ class _DietGoalCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(16),
                 ),
                 child: Text(
-                  'Mira brief: ${goal!.aiBrief}',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  'Mira focus: ${goal!.aiBrief}',
+                  style: theme.textTheme.bodySmall?.copyWith(
                         color: const Color(0xFF7A5A45),
                       ),
                 ),
@@ -1903,6 +2098,222 @@ class _DietGoalCard extends StatelessWidget {
             ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _WeeklyMealPlanCard extends StatelessWidget {
+  const _WeeklyMealPlanCard({
+    required this.plan,
+    required this.isGenerating,
+    required this.onGenerate,
+    required this.onViewWeek,
+  });
+
+  final WeeklyMealPlan? plan;
+  final bool isGenerating;
+  final Future<void> Function(bool regenerate) onGenerate;
+  final VoidCallback onViewWeek;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final today = DateTime.now();
+    final todayPlan = plan?.dayFor(today);
+    final hasPlan = plan != null && !plan!.isEmpty;
+
+    return Card(
+      color: const Color(0xFFF7FBF5),
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(24),
+        side: const BorderSide(
+          color: Color(0xFFBFD9BF),
+          width: 1.4,
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 7,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFDDF1DF),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    'Weekly Plan',
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: const Color(0xFF2F6B35),
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: isGenerating
+                      ? null
+                      : () => onGenerate(hasPlan),
+                  child: Text(hasPlan ? 'Regenerate' : 'Generate'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            if (!hasPlan) ...[
+              Text(
+                'Generate a 7-day meal course with Mira based on your location, then keep today’s suggested meals visible here.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: const Color(0xFF5D6E5E),
+                  height: 1.35,
+                ),
+              ),
+            ] else ...[
+              Text(
+                'Today’s suggested meals',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: const Color(0xFF223426),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                plan!.location,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: const Color(0xFF55725A),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 12),
+              if (todayPlan == null)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: const Color(0xFFD3E5D4)),
+                  ),
+                  child: Text(
+                    'This plan no longer covers today. Regenerate it to get a fresh 7-day course.',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: const Color(0xFF536453),
+                    ),
+                  ),
+                )
+              else
+                _TodayMealPlanPanel(day: todayPlan),
+              if (plan!.goalSummary.trim().isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text(
+                  'Goal lens: ${plan!.goalSummary}',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: const Color(0xFF55725A),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 14),
+              OutlinedButton.icon(
+                onPressed: onViewWeek,
+                icon: const Icon(Icons.view_week_outlined),
+                label: const Text('View 7 days'),
+              ),
+            ],
+            if (isGenerating) ...[
+              const SizedBox(height: 14),
+              const LinearProgressIndicator(),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TodayMealPlanPanel extends StatelessWidget {
+  const _TodayMealPlanPanel({required this.day});
+
+  final WeeklyMealPlanDay day;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFD3E5D4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            day.label,
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w800,
+              color: const Color(0xFF223426),
+            ),
+          ),
+          if (day.focus.trim().isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              day.focus,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: const Color(0xFF5E725E),
+              ),
+            ),
+          ],
+          const SizedBox(height: 12),
+          _MealPlanLine(label: 'Breakfast', value: day.breakfast),
+          const SizedBox(height: 8),
+          _MealPlanLine(label: 'Lunch', value: day.lunch),
+          const SizedBox(height: 8),
+          _MealPlanLine(label: 'Dinner', value: day.dinner),
+          if ((day.snack ?? '').trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _MealPlanLine(label: 'Snack', value: day.snack!.trim()),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _MealPlanLine extends StatelessWidget {
+  const _MealPlanLine({
+    required this.label,
+    required this.value,
+  });
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return RichText(
+      text: TextSpan(
+        style: theme.textTheme.bodyMedium?.copyWith(
+          color: const Color(0xFF2E3B30),
+          height: 1.35,
+        ),
+        children: [
+          TextSpan(
+            text: '$label: ',
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
+          TextSpan(text: value),
+        ],
       ),
     );
   }
@@ -2104,8 +2515,8 @@ class _StatChip extends StatelessWidget {
                       size: 18,
                       color: Colors.white70,
                     ),
-              ],
-            ),
+                ],
+              ),
               const SizedBox(height: 1),
               Expanded(
                 child: Align(
@@ -2270,7 +2681,9 @@ class _TodayDrinksSheet extends StatelessWidget {
                                   ),
                                 ),
                               ),
-                              for (var index = 0; index < drinks.length; index++)
+                              for (var index = 0;
+                                  index < drinks.length;
+                                  index++)
                                 Positioned(
                                   left: 0,
                                   right: 0,
@@ -2327,9 +2740,11 @@ class _TodayDrinksSheet extends StatelessWidget {
         )
         .toDouble();
     final desiredContentHeight = topInset + bottomInset + (totalMinutes * 0.22);
-    final targetContentHeight = math.max(minContentHeight, desiredContentHeight);
+    final targetContentHeight =
+        math.max(minContentHeight, desiredContentHeight);
     final contentHeight = allowScroll
-        ? math.min(math.max(targetContentHeight, viewportHeight + 96), viewportHeight * 1.9)
+        ? math.min(math.max(targetContentHeight, viewportHeight + 96),
+            viewportHeight * 1.9)
         : math.min(viewportHeight, targetContentHeight);
     final usableSpan = math.max(1.0, contentHeight - topInset - bottomInset);
 
@@ -2711,34 +3126,34 @@ class _CoachCardState extends State<_CoachCard> {
                     height: 1.5,
                   ),
             ),
-                  if (widget.note.length > 140) ...[
-                    const SizedBox(height: 10),
-                    TextButton(
-                      onPressed: () {
-                        setState(() {
-                          _expanded = !_expanded;
-                        });
-                      },
-                      style: TextButton.styleFrom(
-                        padding: EdgeInsets.zero,
-                        minimumSize: const Size(0, 0),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            _expanded
-                                ? Icons.keyboard_arrow_up_rounded
-                                : Icons.keyboard_arrow_down_rounded,
-                            size: 18,
-                          ),
-                          const SizedBox(width: 2),
-                          Text(_expanded ? 'Collapse' : 'Read more'),
-                        ],
-                      ),
+            if (widget.note.length > 140) ...[
+              const SizedBox(height: 10),
+              TextButton(
+                onPressed: () {
+                  setState(() {
+                    _expanded = !_expanded;
+                  });
+                },
+                style: TextButton.styleFrom(
+                  padding: EdgeInsets.zero,
+                  minimumSize: const Size(0, 0),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      _expanded
+                          ? Icons.keyboard_arrow_up_rounded
+                          : Icons.keyboard_arrow_down_rounded,
+                      size: 18,
                     ),
+                    const SizedBox(width: 2),
+                    Text(_expanded ? 'Collapse' : 'Read more'),
                   ],
+                ),
+              ),
+            ],
             const SizedBox(height: 12),
             Row(
               children: [
@@ -2908,12 +3323,23 @@ class _FoodWordPickerSheetState extends State<_FoodWordPickerSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Save food words',
-            style: Theme.of(context)
-                .textTheme
-                .titleLarge
-                ?.copyWith(fontWeight: FontWeight.w700),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Save food words',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleLarge
+                      ?.copyWith(fontWeight: FontWeight.w700),
+                ),
+              ),
+              IconButton(
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.close_rounded),
+                tooltip: 'Cancel',
+              ),
+            ],
           ),
           const SizedBox(height: 8),
           Text(
@@ -3034,27 +3460,37 @@ class _FoodWordPickerSheetState extends State<_FoodWordPickerSheet> {
             ),
           ),
           const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton(
-              onPressed: _selectedTerms.isEmpty
-                  ? null
-                  : () {
-                      Navigator.of(context).pop(
-                        [
-                          for (final suggestion in widget.suggestions)
-                            if (_selectedTerms
-                                .contains(suggestion.term.toLowerCase()))
-                              suggestion,
-                        ],
-                      );
-                    },
-              child: Text(
-                _selectedTerms.length == 1
-                    ? 'Save 1 word'
-                    : 'Save ${_selectedTerms.length} words',
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancel'),
+                ),
               ),
-            ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: FilledButton(
+                  onPressed: _selectedTerms.isEmpty
+                      ? null
+                      : () {
+                          Navigator.of(context).pop(
+                            [
+                              for (final suggestion in widget.suggestions)
+                                if (_selectedTerms
+                                    .contains(suggestion.term.toLowerCase()))
+                                  suggestion,
+                            ],
+                          );
+                        },
+                  child: Text(
+                    _selectedTerms.length == 1
+                        ? 'Save 1 word'
+                        : 'Save ${_selectedTerms.length} words',
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -3065,7 +3501,8 @@ class _FoodWordPickerSheetState extends State<_FoodWordPickerSheet> {
 const Map<String, _WordMeta> _foodWordGlossary = {
   'grilled': _WordMeta(
     category: 'Cooking',
-    definition: 'Cooked over direct heat, usually on a grill, until the outside is browned.',
+    definition:
+        'Cooked over direct heat, usually on a grill, until the outside is browned.',
     examples: [
       'We ordered grilled chicken with rice.',
       'Grilled vegetables taste slightly smoky.',
@@ -3083,7 +3520,8 @@ const Map<String, _WordMeta> _foodWordGlossary = {
   ),
   'stir-fried': _WordMeta(
     category: 'Cooking',
-    definition: 'Cooked quickly in a small amount of oil over high heat while being stirred.',
+    definition:
+        'Cooked quickly in a small amount of oil over high heat while being stirred.',
     examples: [
       'The noodles were stir-fried with beef and herbs.',
       'Stir-fried greens stay bright and tender.',
@@ -3128,7 +3566,8 @@ const Map<String, _WordMeta> _foodWordGlossary = {
   ),
   'braised': _WordMeta(
     category: 'Cooking',
-    definition: 'Cooked slowly with a small amount of liquid until soft and tender.',
+    definition:
+        'Cooked slowly with a small amount of liquid until soft and tender.',
     examples: [
       'Braised pork often has a deep, rich flavor.',
       'The braised tofu absorbed the sauce well.',
@@ -3155,7 +3594,8 @@ const Map<String, _WordMeta> _foodWordGlossary = {
   ),
   'broth': _WordMeta(
     category: 'Food',
-    definition: 'A thin savory liquid made by cooking meat, bones, or vegetables in water.',
+    definition:
+        'A thin savory liquid made by cooking meat, bones, or vegetables in water.',
     examples: [
       'The noodles came in a warm beef broth.',
       'A clear broth can still be full of flavor.',
@@ -3164,7 +3604,8 @@ const Map<String, _WordMeta> _foodWordGlossary = {
   ),
   'noodles': _WordMeta(
     category: 'Food',
-    definition: 'Long thin strips made from dough, often served in soup or stir-fried dishes.',
+    definition:
+        'Long thin strips made from dough, often served in soup or stir-fried dishes.',
     examples: [
       'Rice noodles are common in Vietnamese soups.',
       'The noodles soaked up the sauce quickly.',
@@ -3173,7 +3614,8 @@ const Map<String, _WordMeta> _foodWordGlossary = {
   ),
   'porridge': _WordMeta(
     category: 'Food',
-    definition: 'A soft dish made by boiling grains, usually rice or oats, in liquid.',
+    definition:
+        'A soft dish made by boiling grains, usually rice or oats, in liquid.',
     examples: [
       'Rice porridge is gentle on the stomach.',
       'He ate porridge with minced meat and herbs.',
@@ -3182,7 +3624,8 @@ const Map<String, _WordMeta> _foodWordGlossary = {
   ),
   'tofu': _WordMeta(
     category: 'Food',
-    definition: 'A soft food made from soybeans that is often used as a source of protein.',
+    definition:
+        'A soft food made from soybeans that is often used as a source of protein.',
     examples: [
       'Tofu can be steamed, fried, or braised.',
       'The tofu absorbed the broth well.',
@@ -3191,7 +3634,8 @@ const Map<String, _WordMeta> _foodWordGlossary = {
   ),
   'pickle': _WordMeta(
     category: 'Food',
-    definition: 'Food preserved in vinegar, salt, or brine for a sharp or sour taste.',
+    definition:
+        'Food preserved in vinegar, salt, or brine for a sharp or sour taste.',
     examples: [
       'Pickled vegetables add brightness to the meal.',
       'A little pickle can balance a rich dish.',
@@ -3200,7 +3644,8 @@ const Map<String, _WordMeta> _foodWordGlossary = {
   ),
   'herbs': _WordMeta(
     category: 'Food',
-    definition: 'Fresh leaves used in cooking to add flavor, aroma, or freshness.',
+    definition:
+        'Fresh leaves used in cooking to add flavor, aroma, or freshness.',
     examples: [
       'The soup came with herbs on the side.',
       'Fresh herbs make the bowl feel lighter.',
@@ -3209,7 +3654,8 @@ const Map<String, _WordMeta> _foodWordGlossary = {
   ),
   'soup': _WordMeta(
     category: 'Food',
-    definition: 'A mainly liquid dish with ingredients cooked in broth or stock.',
+    definition:
+        'A mainly liquid dish with ingredients cooked in broth or stock.',
     examples: [
       'The soup was hot and comforting.',
       'This soup has a rich, savory base.',
@@ -3257,6 +3703,53 @@ const Set<String> _wordStoplist = {
   'coffee',
   'tea',
   'smoothie',
+  'color',
+  'colors',
+  'mix',
+  'mixed',
+  'bowl',
+  'bowls',
+  'dish',
+  'dishes',
+};
+
+const Set<String> _ingredientHintWords = {
+  'amaranth',
+  'lolot',
+  'perilla',
+  'lemongrass',
+  'turmeric',
+  'galangal',
+  'shallot',
+  'shallots',
+  'cilantro',
+  'coriander',
+  'basil',
+  'mint',
+  'anchovy',
+  'mackerel',
+  'sardine',
+  'eggplant',
+  'okra',
+  'cassava',
+  'tamarind',
+};
+
+const Set<String> _genericFoodWordPenalty = {
+  'wrapped',
+  'leaf',
+  'leaves',
+  'piece',
+  'pieces',
+  'served',
+};
+
+const Set<String> _commonCookingWordPenalty = {
+  'pork',
+  'beef',
+  'chicken',
+  'fish',
+  'meat',
 };
 
 String _displayTerm(String term) {
@@ -3266,15 +3759,76 @@ String _displayTerm(String term) {
   return '${term[0].toUpperCase()}${term.substring(1)}';
 }
 
+String _normalizeWordTerm(String term) {
+  return term.trim().toLowerCase();
+}
+
+int _foodWordPriorityScore({
+  required String token,
+  required int frequency,
+}) {
+  var score = 0;
+
+  score += frequency * 40;
+  score += token.length;
+
+  if (token.contains('-')) {
+    score += 10;
+  }
+  if (token.length >= 8) {
+    score += 12;
+  } else if (token.length >= 6) {
+    score += 6;
+  }
+  if (_ingredientHintWords.contains(token)) {
+    score += 30;
+  }
+  if (_genericFoodWordPenalty.contains(token)) {
+    score -= 35;
+  }
+  if (_commonCookingWordPenalty.contains(token)) {
+    score -= 20;
+  }
+
+  return score;
+}
+
 String _fallbackWordDefinition(String term) {
   return 'Dictionary definition and images will be generated when saved.';
 }
 
 List<String> _fallbackWordExamples(String term) {
   final display = _displayTerm(term);
+  final lower = term.trim().toLowerCase();
+
+  if (lower.isEmpty) {
+    return const [];
+  }
+
+  if (lower.contains('-')) {
+    return [
+      'The vegetables were $lower with garlic.',
+      'She ordered a $lower noodle dish for lunch.',
+    ];
+  }
+
+  if (lower.endsWith('ed')) {
+    return [
+      'The fish was $lower until tender.',
+      'We had $lower chicken with rice.',
+    ];
+  }
+
+  if (lower.endsWith('s')) {
+    return [
+      '$display are often served as part of a meal.',
+      'The dish was topped with fresh $lower.',
+    ];
+  }
+
   return [
-    'I saw "$display" in today\'s meal note.',
-    'I can use "$display" when I describe what I ate in English.',
+    'The soup was served with $lower.',
+    'She added $lower to the dish for extra flavor.',
   ];
 }
 
@@ -3725,12 +4279,14 @@ class _DietGoalEditorSheetState extends State<_DietGoalEditorSheet> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Diet mission',
-            style: Theme.of(context).textTheme.headlineSmall,
+            'Diet Mission',
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
           ),
           const SizedBox(height: 8),
           Text(
-            'Write the outcome you want from this diet. Meal Mirror saves the full mission locally and only reuses a short Mira brief after you update it.',
+            'Write the outcome you want to chase. Keep it specific, motivating, and easy to judge against your real meals.',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: const Color(0xFF6E6257),
                 ),
@@ -3742,9 +4298,9 @@ class _DietGoalEditorSheetState extends State<_DietGoalEditorSheet> {
             maxLines: 8,
             textInputAction: TextInputAction.newline,
             decoration: const InputDecoration(
-              labelText: 'Mission / goal',
+              labelText: 'Mission',
               hintText:
-                  'Example: Lose body fat steadily, reduce late-night snacking, and keep meals satisfying enough to avoid overeating.',
+                  'Example: Cut late-night overeating, keep lunch protein high, and lose body fat steadily without feeling deprived.',
             ),
           ),
           const SizedBox(height: 18),
@@ -3757,6 +4313,334 @@ class _DietGoalEditorSheetState extends State<_DietGoalEditorSheet> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _WeeklyMealPlanLocationSheet extends StatefulWidget {
+  const _WeeklyMealPlanLocationSheet({
+    required this.initialSelection,
+    required this.isRegenerating,
+    required this.locationService,
+  });
+
+  final LocationSelection initialSelection;
+  final bool isRegenerating;
+  final LocationService locationService;
+
+  @override
+  State<_WeeklyMealPlanLocationSheet> createState() =>
+      _WeeklyMealPlanLocationSheetState();
+}
+
+class _WeeklyMealPlanLocationSheetState
+    extends State<_WeeklyMealPlanLocationSheet> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initialSelection.label,
+  );
+  late LatLng _selectedPoint = LatLng(
+    widget.initialSelection.latitude,
+    widget.initialSelection.longitude,
+  );
+  bool _isFetchingCurrentLocation = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+
+    return SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(20, 8, 20, bottomInset + 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            widget.isRegenerating ? 'Regenerate Weekly Plan' : 'Weekly Meal Plan',
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Tell Mira where you are so the 7-day meal course feels local and realistic.',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: const Color(0xFF6E6257),
+                ),
+          ),
+          const SizedBox(height: 16),
+          OutlinedButton.icon(
+            onPressed: _isFetchingCurrentLocation ? null : _useCurrentLocation,
+            icon: const Icon(Icons.my_location_outlined),
+            label: Text(
+              _isFetchingCurrentLocation
+                  ? 'Finding current location...'
+                  : 'Use current location',
+            ),
+          ),
+          const SizedBox(height: 14),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(18),
+            child: SizedBox(
+              height: 230,
+              child: FlutterMap(
+                options: MapOptions(
+                  initialCenter: _selectedPoint,
+                  initialZoom: 13,
+                  onTap: (_, point) => _updatePickedPoint(point),
+                ),
+                children: [
+                  TileLayer(
+                    urlTemplate:
+                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                    userAgentPackageName: 'com.madebyahn.my_diet',
+                  ),
+                  MarkerLayer(
+                    markers: [
+                      Marker(
+                        point: _selectedPoint,
+                        width: 44,
+                        height: 44,
+                        child: const Icon(
+                          Icons.location_on_rounded,
+                          size: 40,
+                          color: Color(0xFFDC5A32),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Tap the map to fine-tune the area.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: const Color(0xFF807366),
+                ),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _controller,
+            textInputAction: TextInputAction.done,
+            decoration: const InputDecoration(
+              labelText: 'Location',
+              hintText: 'Example: Ho Chi Minh City, Vietnam',
+            ),
+            onSubmitted: (_) => _submit(),
+          ),
+          const SizedBox(height: 18),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              onPressed: _submit,
+              child: Text(
+                widget.isRegenerating ? 'Regenerate plan' : 'Generate plan',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _useCurrentLocation() async {
+    setState(() {
+      _isFetchingCurrentLocation = true;
+    });
+
+    try {
+      final current = await widget.locationService.getCurrentLocation();
+      if (!mounted || current == null) {
+        return;
+      }
+      setState(() {
+        _selectedPoint = LatLng(current.latitude, current.longitude);
+        _controller.text = current.label;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString().replaceFirst('Exception: ', '')),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isFetchingCurrentLocation = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _updatePickedPoint(LatLng point) async {
+    setState(() {
+      _selectedPoint = point;
+    });
+
+    final label = await widget.locationService.reverseGeocode(
+      latitude: point.latitude,
+      longitude: point.longitude,
+    );
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _controller.text = label;
+    });
+  }
+
+  void _submit() {
+    Navigator.of(context).pop(
+      LocationSelection(
+        label: _controller.text.trim(),
+        latitude: _selectedPoint.latitude,
+        longitude: _selectedPoint.longitude,
+      ),
+    );
+  }
+}
+
+class _WeeklyMealPlanSheet extends StatelessWidget {
+  const _WeeklyMealPlanSheet({required this.plan});
+
+  final WeeklyMealPlan plan;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                IconButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.arrow_back),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Your 7-Day Meal Course',
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              plan.location,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: const Color(0xFF55725A),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            if (plan.goalSummary.trim().isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Goal lens: ${plan.goalSummary}',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: const Color(0xFF6E6257),
+                ),
+              ),
+            ],
+            const SizedBox(height: 18),
+            for (final day in plan.days) ...[
+              Builder(builder: (context) {
+                final dayDate =
+                    DateTime(day.date.year, day.date.month, day.date.day);
+                final isToday = dayDate == today;
+                final isPast = dayDate.isBefore(today);
+                return Opacity(
+                  opacity: isPast ? 0.55 : 1.0,
+                  child: Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: isToday
+                          ? const Color(0xFFE8F5E9)
+                          : const Color(0xFFF8FBF7),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(
+                        color: isToday
+                            ? const Color(0xFF55725A)
+                            : const Color(0xFFDCE8DA),
+                        width: isToday ? 1.5 : 1.0,
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(
+                              _formatMealPlanDayLabel(day.date),
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                fontWeight: FontWeight.w800,
+                                color: const Color(0xFF243527),
+                              ),
+                            ),
+                            if (isToday) ...[
+                              const Spacer(),
+                              Text(
+                                'Today',
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: const Color(0xFF55725A),
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                        if (day.focus.trim().isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            day.focus,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: const Color(0xFF617262),
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 12),
+                        _MealPlanLine(label: 'Breakfast', value: day.breakfast),
+                        const SizedBox(height: 8),
+                        _MealPlanLine(label: 'Lunch', value: day.lunch),
+                        const SizedBox(height: 8),
+                        _MealPlanLine(label: 'Dinner', value: day.dinner),
+                        if ((day.snack ?? '').trim().isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          _MealPlanLine(
+                              label: 'Snack', value: day.snack!.trim()),
+                        ],
+                      ],
+                    ),
+                  ),
+                );
+              }),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -4949,7 +5833,6 @@ class _MealImageView extends StatelessWidget {
     required this.path,
     this.fit = BoxFit.contain,
     this.cacheWidth,
-    this.cacheHeight,
     this.filterQuality = FilterQuality.low,
     this.errorBuilder,
   });
@@ -4957,7 +5840,6 @@ class _MealImageView extends StatelessWidget {
   final String path;
   final BoxFit fit;
   final int? cacheWidth;
-  final int? cacheHeight;
   final FilterQuality filterQuality;
   final ImageErrorWidgetBuilder? errorBuilder;
 
@@ -4978,7 +5860,6 @@ class _MealImageView extends StatelessWidget {
     return Image.file(
       MealRepository.fileFromStoredPath(path),
       cacheWidth: cacheWidth,
-      cacheHeight: cacheHeight,
       filterQuality: filterQuality,
       fit: fit,
       errorBuilder: errorBuilder,
@@ -5007,7 +5888,6 @@ class _MealThumbnail extends StatelessWidget {
           path: path,
           fit: BoxFit.cover,
           cacheWidth: 720,
-          cacheHeight: 720,
           filterQuality: FilterQuality.low,
           errorBuilder: (context, error, stackTrace) {
             return Container(
@@ -5132,4 +6012,19 @@ class _MealEditorSeed {
   final int feelingRating;
   final String feelingNote;
   final int drinkVolumeMl;
+}
+
+String _formatMealPlanDayLabel(DateTime date) {
+  const weekdays = [
+    'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'
+  ];
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+  ];
+  final n = date.day;
+  final suffix = (n >= 11 && n <= 13)
+      ? 'th'
+      : switch (n % 10) { 1 => 'st', 2 => 'nd', 3 => 'rd', _ => 'th' };
+  return '${weekdays[date.weekday - 1]}, ${months[date.month - 1]} $n$suffix';
 }

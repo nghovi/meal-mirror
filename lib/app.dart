@@ -18,7 +18,9 @@ class _AnKiengAppState extends State<AnKiengApp> {
   void initState() {
     super.initState();
     _authService.addListener(_handleAuthChanged);
-    _authService.loadSession();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _authService.loadSession();
+    });
   }
 
   @override

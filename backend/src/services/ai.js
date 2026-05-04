@@ -99,6 +99,64 @@ export async function createDietGoalBrief(body) {
   };
 }
 
+export async function createWeeklyMealPlan(body) {
+  const location = String(body.location || "").trim();
+  if (!location) {
+    throw new Error("location is required");
+  }
+
+  const dietGoal = String(body.dietGoal || "").trim();
+  const startDate = String(body.startDate || "").trim();
+
+  const data = await callOpenAi([
+    {
+      role: "system",
+      content: [
+        {
+          type: "input_text",
+          text:
+            "You are Mira, creating practical 7-day meal courses for Meal Mirror users. " +
+            "Use the user's location to lean toward realistic local foods, ingredients, and meal timing. " +
+            "Keep the plan concrete, balanced, and easy to imagine. " +
+            "Avoid nutrition lecture language. " +
+            "Return strict JSON only."
+        }
+      ]
+    },
+    {
+      role: "user",
+      content: [
+        {
+          type: "input_text",
+          text:
+            `Create a weekly meal plan for a user in ${location}. ` +
+            `The 7-day plan should start on ${startDate || "today"}. ` +
+            "Return strict JSON only with keys: location, days. " +
+            "days must be an array of exactly 7 objects. " +
+            "Each object must have keys: label, focus, breakfast, lunch, dinner, snack. " +
+            "Each meal should be one short natural line, specific enough to picture and realistic for that location."
+        },
+        ...(dietGoal
+          ? [
+              {
+                type: "input_text",
+                text: `Diet goal: ${dietGoal}`
+              }
+            ]
+          : [])
+      ]
+    }
+  ]);
+
+  const parsed = extractJsonObject(extractOpenAiOutputText(data));
+  return {
+    plan: {
+      location: String(parsed.location || location).trim(),
+      days: Array.isArray(parsed.days) ? parsed.days : []
+    }
+  };
+}
+
 export async function coachChat(body) {
   const message = String(body.message || "").trim();
   if (!message) {
@@ -130,6 +188,8 @@ export async function coachChat(body) {
             "Do not pretend to be a doctor. " +
             "Use the user mission and recent meal history to answer clearly. " +
             "Prefer practical, specific advice over generic nutrition talk. " +
+            "When describing a day of eating, use plain, natural language grounded in the logged meals, timing, and portions. " +
+            "Avoid abstract phrases like 'no single meal pattern dominates' or other vague summary jargon. " +
             "Keep replies under 140 words unless the user asks for more detail."
         }
       ]

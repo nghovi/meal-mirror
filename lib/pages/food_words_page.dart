@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models/food_word.dart';
 import '../services/meal_repository.dart';
@@ -28,7 +29,8 @@ class _FoodWordsPageState extends State<FoodWordsPage> {
     if (widget.initialOpenWordId != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         try {
-          final initialWord = _words.firstWhere((w) => w.id == widget.initialOpenWordId);
+          final initialWord =
+              _words.firstWhere((w) => w.id == widget.initialOpenWordId);
           if (mounted) {
             _showWordDetails(context, initialWord);
           }
@@ -44,6 +46,11 @@ class _FoodWordsPageState extends State<FoodWordsPage> {
 
     return Scaffold(
       appBar: AppBar(
+        leading: IconButton(
+          onPressed: () => Navigator.of(context).maybePop(),
+          icon: const Icon(Icons.arrow_back_ios_new_rounded),
+          tooltip: 'Back',
+        ),
         title: const Text('My food words'),
       ),
       body: sortedWords.isEmpty
@@ -122,7 +129,8 @@ class _FoodWordsPageState extends State<FoodWordsPage> {
                             if (word.examples.isNotEmpty) ...[
                               const SizedBox(height: 8),
                               TextButton.icon(
-                                onPressed: () => _showWordDetails(context, word),
+                                onPressed: () =>
+                                    _showWordDetails(context, word),
                                 style: TextButton.styleFrom(
                                   padding: EdgeInsets.zero,
                                   minimumSize: Size.zero,
@@ -208,9 +216,53 @@ class _FoodWordsPageState extends State<FoodWordsPage> {
                     ),
                   ),
                 ),
+                IconButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close_rounded),
+                  tooltip: 'Close',
+                ),
               ],
             ),
             const SizedBox(height: 12),
+            if ((word.pronunciation ?? '').trim().isNotEmpty ||
+                (word.pronunciationAudioUrl ?? '').trim().isNotEmpty) ...[
+              Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 10,
+                runSpacing: 8,
+                children: [
+                  if ((word.pronunciation ?? '').trim().isNotEmpty)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 7,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF7F1EA),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: const Color(0xFFE7D8CB)),
+                      ),
+                      child: Text(
+                        word.pronunciation!,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              color: const Color(0xFF5F5148),
+                              fontWeight: FontWeight.w600,
+                            ),
+                      ),
+                    ),
+                  if ((word.pronunciationAudioUrl ?? '').trim().isNotEmpty)
+                    TextButton.icon(
+                      onPressed: () => _playPronunciation(
+                        context,
+                        word.pronunciationAudioUrl!,
+                      ),
+                      icon: const Icon(Icons.volume_up_rounded, size: 18),
+                      label: const Text('Hear pronunciation'),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 14),
+            ],
             Text(
               word.definition,
               style: Theme.of(context).textTheme.bodyLarge?.copyWith(
@@ -260,6 +312,25 @@ class _FoodWordsPageState extends State<FoodWordsPage> {
       ),
     );
   }
+
+  Future<void> _playPronunciation(BuildContext context, String rawUrl) async {
+    final url = rawUrl.trim();
+    if (url.isEmpty) {
+      return;
+    }
+
+    final uri = Uri.tryParse(url);
+    if (uri == null) {
+      return;
+    }
+
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!launched && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open pronunciation audio.')),
+      );
+    }
+  }
 }
 
 class _WordVisualCard extends StatelessWidget {
@@ -285,7 +356,9 @@ class _WordVisualCard extends StatelessWidget {
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(26),
-        child: hasSourceImage ? _buildSourceImage(sourceImagePath) : _buildFallbackArt(),
+        child: hasSourceImage
+            ? _buildSourceImage(sourceImagePath)
+            : _buildFallbackArt(),
       ),
     );
   }

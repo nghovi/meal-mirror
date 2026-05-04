@@ -12,18 +12,21 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/diet_goal.dart';
 import '../models/food_word.dart';
 import '../models/meal_entry.dart';
+import '../models/weekly_meal_plan.dart';
 import 'auth_service.dart';
 
 class AppStateSnapshot {
   const AppStateSnapshot({
     required this.entries,
     required this.dietGoal,
+    required this.weeklyMealPlan,
     required this.miraMessages,
     required this.savedWords,
   });
 
   final List<MealEntry> entries;
   final DietGoal? dietGoal;
+  final WeeklyMealPlan? weeklyMealPlan;
   final List<Map<String, dynamic>> miraMessages;
   final List<FoodWord> savedWords;
 }
@@ -43,10 +46,12 @@ class MealRepository {
 
   static const _storageKey = 'meal_entries_v3';
   static const _dietGoalKey = 'diet_goal_v1';
+  static const _weeklyMealPlanKey = 'weekly_meal_plan_v1';
   static const _miraMessagesKey = 'mira_messages_v1';
   static const _savedWordsKey = 'saved_food_words_v1';
   static const _deviceIdKey = 'sync_device_id_v1';
   static const _snapshotUpdatedAtKey = 'sync_snapshot_updated_at_v1';
+  static const _authScopeKey = 'auth_scope_v1';
 
   final http.Client _client;
   final AuthService _authService;
@@ -55,6 +60,7 @@ class MealRepository {
 
   Future<AppStateSnapshot> loadAppState() async {
     final preferences = await SharedPreferences.getInstance();
+    await _reconcileAuthScope(preferences);
     final localSnapshot = _readLocalSnapshot(preferences);
     final localNormalized = await _normalizeSnapshotImagePaths(localSnapshot);
     if (localNormalized.changed) {
@@ -76,6 +82,26 @@ class MealRepository {
     }
 
     return mergedNormalized.snapshot;
+  }
+
+  Future<AppStateSnapshot> loadCachedAppState() async {
+    final preferences = await SharedPreferences.getInstance();
+    await _reconcileAuthScope(preferences);
+    final localSnapshot = _readLocalSnapshot(preferences);
+    final localNormalized = await _normalizeSnapshotImagePaths(localSnapshot);
+    if (localNormalized.changed) {
+      await _writeLocalSnapshot(
+        preferences,
+        localNormalized.snapshot,
+        _parseTimestamp(preferences.getString(_snapshotUpdatedAtKey)),
+      );
+    }
+    return localNormalized.snapshot;
+  }
+
+  Future<void> clearLocalAppState() async {
+    final preferences = await SharedPreferences.getInstance();
+    await _clearLocalSnapshot(preferences);
   }
 
   Future<List<MealEntry>> loadEntries() async {
@@ -107,8 +133,44 @@ class MealRepository {
     unawaited(_enqueueSync(preferences));
   }
 
+  Future<WeeklyMealPlan?> loadWeeklyMealPlan() async {
+    return (await loadAppState()).weeklyMealPlan;
+  }
+
+  Future<void> saveWeeklyMealPlan(WeeklyMealPlan plan) async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString(_weeklyMealPlanKey, plan.encode());
+    await _markSnapshotUpdated(preferences);
+    unawaited(_enqueueSync(preferences));
+  }
+
+  Future<void> clearWeeklyMealPlan() async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.remove(_weeklyMealPlanKey);
+    await _markSnapshotUpdated(preferences);
+    unawaited(_enqueueSync(preferences));
+  }
+
   Future<List<Map<String, dynamic>>> loadMiraMessages() async {
     return (await loadAppState()).miraMessages;
+  }
+
+  Future<List<Map<String, dynamic>>> loadLocalMiraMessages({
+    int? limit,
+    int offsetFromEnd = 0,
+  }) async {
+    final preferences = await SharedPreferences.getInstance();
+    final messages = _readLocalMiraMessages(preferences);
+    if (messages.isEmpty) {
+      return const [];
+    }
+
+    final end = math.max(0, messages.length - offsetFromEnd);
+    final start = limit == null ? 0 : math.max(0, end - limit);
+    if (start >= end) {
+      return const [];
+    }
+    return messages.sublist(start, end);
   }
 
   Future<void> saveMiraMessages(List<Map<String, dynamic>> messages) async {
@@ -123,6 +185,38 @@ class MealRepository {
     await preferences.remove(_miraMessagesKey);
     await _markSnapshotUpdated(preferences);
     unawaited(_enqueueSync(preferences));
+  }
+
+  Future<void> _reconcileAuthScope(SharedPreferences preferences) async {
+    final storedScope = preferences.getString(_authScopeKey);
+    final currentScope = _authService.isAuthenticated
+        ? 'user_${_authService.session?.userId ?? ''}'
+        : null;
+
+    if (currentScope == null) {
+      if (storedScope != null && storedScope.isNotEmpty) {
+        await _clearLocalSnapshot(preferences);
+        await preferences.remove(_authScopeKey);
+      }
+      return;
+    }
+
+    if (storedScope == currentScope) {
+      return;
+    }
+
+    await _clearLocalSnapshot(preferences);
+    await preferences.setString(_authScopeKey, currentScope);
+  }
+
+  Future<void> _clearLocalSnapshot(SharedPreferences preferences) async {
+    await preferences.remove(_storageKey);
+    await preferences.remove(_dietGoalKey);
+    await preferences.remove(_weeklyMealPlanKey);
+    await preferences.remove(_miraMessagesKey);
+    await preferences.remove(_savedWordsKey);
+    await preferences.remove(_snapshotUpdatedAtKey);
+    _syncQueue = Future<void>.value();
   }
 
   Future<List<FoodWord>> loadSavedWords() async {
@@ -180,7 +274,7 @@ class MealRepository {
   AppStateSnapshot _readLocalSnapshot(SharedPreferences preferences) {
     final rawEntries = preferences.getString(_storageKey);
     final rawDietGoal = preferences.getString(_dietGoalKey);
-    final rawMessages = preferences.getString(_miraMessagesKey);
+    final rawWeeklyMealPlan = preferences.getString(_weeklyMealPlanKey);
     final rawWords = preferences.getString(_savedWordsKey);
 
     return AppStateSnapshot(
@@ -190,15 +284,28 @@ class MealRepository {
       dietGoal: rawDietGoal == null || rawDietGoal.isEmpty
           ? null
           : DietGoal.fromRaw(rawDietGoal),
-      miraMessages: rawMessages == null || rawMessages.isEmpty
-          ? const []
-          : (jsonDecode(rawMessages) as List<dynamic>)
-              .map((item) => Map<String, dynamic>.from(item as Map))
-              .toList(),
+      weeklyMealPlan:
+          rawWeeklyMealPlan == null || rawWeeklyMealPlan.isEmpty
+              ? null
+              : WeeklyMealPlan.fromRaw(rawWeeklyMealPlan),
+      miraMessages: _readLocalMiraMessages(preferences),
       savedWords: rawWords == null || rawWords.isEmpty
           ? const []
           : FoodWord.decodeList(rawWords),
     );
+  }
+
+  List<Map<String, dynamic>> _readLocalMiraMessages(
+    SharedPreferences preferences,
+  ) {
+    final rawMessages = preferences.getString(_miraMessagesKey);
+    if (rawMessages == null || rawMessages.isEmpty) {
+      return const [];
+    }
+
+    return (jsonDecode(rawMessages) as List<dynamic>)
+        .map((item) => Map<String, dynamic>.from(item as Map))
+        .toList();
   }
 
   List<MealEntry> _readLegacyEntries(SharedPreferences preferences) {
@@ -327,6 +434,7 @@ class MealRepository {
             'updatedAt': updatedAt.toIso8601String(),
             'entries': remoteEntries,
             'dietGoal': snapshot.dietGoal?.toMap(),
+            'weeklyMealPlan': snapshot.weeklyMealPlan?.toMap(),
             'miraMessages': snapshot.miraMessages,
             'savedWords':
                 snapshot.savedWords.map((word) => word.toMap()).toList(),
@@ -354,6 +462,7 @@ class MealRepository {
           'updatedAt': updatedAt.toIso8601String(),
           'entries': remoteEntries,
           'dietGoal': snapshot.dietGoal?.toMap(),
+          'weeklyMealPlan': snapshot.weeklyMealPlan?.toMap(),
           'miraMessages': snapshot.miraMessages,
           'savedWords':
               snapshot.savedWords.map((word) => word.toMap()).toList(),
@@ -492,6 +601,7 @@ class MealRepository {
     }
 
     final rawDietGoal = payload['dietGoal'];
+    final rawWeeklyMealPlan = payload['weeklyMealPlan'];
     final rawMessages = payload['miraMessages'] as List<dynamic>? ?? const [];
     final rawWords = payload['savedWords'] as List<dynamic>? ?? const [];
 
@@ -502,11 +612,19 @@ class MealRepository {
           : rawDietGoal is Map
               ? DietGoal.fromMap(Map<String, dynamic>.from(rawDietGoal))
               : null,
+      weeklyMealPlan: rawWeeklyMealPlan is Map<String, dynamic>
+          ? WeeklyMealPlan.fromMap(rawWeeklyMealPlan)
+          : rawWeeklyMealPlan is Map
+              ? WeeklyMealPlan.fromMap(
+                  Map<String, dynamic>.from(rawWeeklyMealPlan),
+                )
+              : null,
       miraMessages: rawMessages
           .map((item) => Map<String, dynamic>.from(item as Map))
           .toList(),
       savedWords: rawWords
-          .map((item) => FoodWord.fromMap(Map<String, dynamic>.from(item as Map)))
+          .map((item) =>
+              FoodWord.fromMap(Map<String, dynamic>.from(item as Map)))
           .toList(),
     );
   }
@@ -558,6 +676,15 @@ class MealRepository {
       await preferences.remove(_dietGoalKey);
     } else {
       await preferences.setString(_dietGoalKey, snapshot.dietGoal!.encode());
+    }
+
+    if (snapshot.weeklyMealPlan == null) {
+      await preferences.remove(_weeklyMealPlanKey);
+    } else {
+      await preferences.setString(
+        _weeklyMealPlanKey,
+        snapshot.weeklyMealPlan!.encode(),
+      );
     }
 
     await preferences.setString(
@@ -614,6 +741,7 @@ class MealRepository {
       snapshot: AppStateSnapshot(
         entries: normalizedEntries,
         dietGoal: snapshot.dietGoal,
+        weeklyMealPlan: snapshot.weeklyMealPlan,
         miraMessages: snapshot.miraMessages,
         savedWords: snapshot.savedWords,
       ),
@@ -666,6 +794,7 @@ class MealRepository {
   bool _snapshotHasContent(AppStateSnapshot snapshot) {
     return snapshot.entries.isNotEmpty ||
         snapshot.dietGoal != null ||
+        snapshot.weeklyMealPlan != null ||
         snapshot.miraMessages.isNotEmpty ||
         snapshot.savedWords.isNotEmpty;
   }

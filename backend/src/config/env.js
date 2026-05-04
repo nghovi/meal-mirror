@@ -18,3 +18,13 @@ const __dirname = path.dirname(__filename);
 export const BACKEND_ROOT = path.resolve(__dirname, "../..");
 export const DATA_DIR = path.join(BACKEND_ROOT, "data");
 export const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
+
+export const FEEDBACK_EMAIL = process.env.FEEDBACK_EMAIL || "vietnh90@gmail.com";
+export const SMTP_CONFIG = {
+  host: process.env.SMTP_HOST || "",
+  port: Number(process.env.SMTP_PORT || 587),
+  secure: process.env.SMTP_SECURE === "true",
+  user: process.env.SMTP_USER || "",
+  password: process.env.SMTP_PASSWORD || "",
+  from: process.env.SMTP_FROM || "",
+};

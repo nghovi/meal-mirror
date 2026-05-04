@@ -124,6 +124,7 @@ The synced snapshot includes:
 - meal entries
 - diet goal
 - Mira chat history
+- saved food words
 
 Meal images are uploaded separately and stored under `backend/data/uploads/`.
 Per-device snapshots are stored in the `device_snapshots` table in the `meal_mirror` MySQL database.
@@ -137,8 +138,22 @@ The backend also materializes normalized records during sync into:
 - `diet_goals`
 - `mira_conversations`
 - `mira_messages`
+- `food_words`
 
 Production sync can live at `https://meal-mirror-api.truongdiem.online`, but it must be set explicitly in the build configuration.
+
+## Backend release checklist
+
+When backend sync shape or schema changes, production rollout must include both code deploy and DB setup:
+
+1. Upload the latest backend files to `/home/centos/apps/meal-mirror/backend`.
+2. Keep server-only files in place:
+   `.env.production`, `data/`, `node_modules/`
+3. Run:
+   `/home/centos/local/node-v20.20.1-linux-x64-glibc-217/bin/node ./scripts/setup-mysql.mjs`
+4. Restart:
+   `sudo systemctl restart meal-mirror-api`
+5. Verify the new schema/data in MySQL after release, especially for new tables like `food_words`.
 
 Example sync request:
 

@@ -1,11 +1,18 @@
-import { analyzeMeal, coachChat, createDietGoalBrief } from "./services/ai.js";
+import {
+  analyzeMeal,
+  coachChat,
+  createDietGoalBrief,
+  createWeeklyMealPlan
+} from "./services/ai.js";
 import {
   deleteUserSession,
   extractBearerToken,
   findUserBySessionToken,
   loginWithPhone,
   registerWithPhone,
-  requireAuthenticatedUser
+  requireAuthenticatedUser,
+  updateDisplayName,
+  updatePassword
 } from "./services/auth.js";
 import {
   readSyncSnapshot,
@@ -15,6 +22,7 @@ import {
 } from "./services/sync.js";
 import { serveUpload, storeUpload } from "./services/uploads.js";
 import { ApiUsageError, assertCanUseAi, recordAiUsage } from "./services/trial.js";
+import { saveFeedback } from "./services/feedback.js";
 import { sendJson, readJson, requestBaseUrl } from "./http/response.js";
 import { sanitizeDeviceId } from "./utils/security.js";
 
@@ -55,6 +63,20 @@ export async function handleRequest(req, res) {
       const { token } = await requireAuthenticatedUser(req);
       await deleteUserSession(token);
       return { ok: true };
+    });
+  }
+
+  if (req.method === "PATCH" && url.pathname === "/auth/profile") {
+    return respond(res, 400, async () => {
+      const { user } = await requireAuthenticatedUser(req);
+      return updateDisplayName(user.id, await readJson(req));
+    });
+  }
+
+  if (req.method === "POST" && url.pathname === "/auth/password") {
+    return respond(res, 400, async () => {
+      const { user } = await requireAuthenticatedUser(req);
+      return updatePassword(user.id, await readJson(req));
     });
   }
 
@@ -154,6 +176,13 @@ export async function handleRequest(req, res) {
     }, authAwareStatus);
   }
 
+  if (req.method === "POST" && url.pathname === "/weekly-meal-plan") {
+    return respond(res, 500, async () => {
+      await requireAuthenticatedUser(req);
+      return createWeeklyMealPlan(await readJson(req));
+    }, authAwareStatus);
+  }
+
   if (req.method === "POST" && url.pathname === "/coach-chat") {
     return respond(res, 500, async () => {
       const { user } = await requireAuthenticatedUser(req);
@@ -163,6 +192,25 @@ export async function handleRequest(req, res) {
       await recordAiUsage({ userId: user.id, action: "coach_chat" });
       return result;
     }, authAwareStatus);
+  }
+
+  if (req.method === "POST" && url.pathname === "/feedback") {
+    return respond(res, 500, async () => {
+      const token = extractBearerToken(req);
+      const user = token ? await findUserBySessionToken(token) : null;
+      const body = await readJson(req);
+      const message = (body.message ?? "").trim();
+      if (!message) {
+        sendJson(res, 400, { error: "message is required" });
+        return null;
+      }
+      return saveFeedback({
+        userId: user?.id ?? null,
+        message,
+        platform: body.platform,
+        appVersion: body.appVersion,
+      });
+    });
   }
 
   sendJson(res, 404, { error: "Not found" });

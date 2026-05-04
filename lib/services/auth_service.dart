@@ -78,15 +78,21 @@ class AuthService extends ChangeNotifier {
     _isLoading = true;
     notifyListeners();
 
-    final raw = await _storage.read(key: _sessionStorageKey);
-    if (raw != null && raw.isNotEmpty) {
-      try {
-        _session = AuthSession.fromMap(
-          Map<String, dynamic>.from(jsonDecode(raw) as Map),
-        );
-      } catch (_) {
-        _session = null;
+    try {
+      final raw = await _storage
+          .read(key: _sessionStorageKey)
+          .timeout(const Duration(seconds: 3));
+      if (raw != null && raw.isNotEmpty) {
+        try {
+          _session = AuthSession.fromMap(
+            Map<String, dynamic>.from(jsonDecode(raw) as Map),
+          );
+        } catch (_) {
+          _session = null;
+        }
       }
+    } catch (_) {
+      _session = null;
     }
 
     _isLoading = false;
@@ -162,6 +168,104 @@ class AuthService extends ChangeNotifier {
     _session = null;
     await _storage.delete(key: _sessionStorageKey);
     notifyListeners();
+  }
+
+  Future<void> updateDisplayName(String displayName) async {
+    final trimmed = displayName.trim();
+    if (trimmed.isEmpty) {
+      throw Exception('Nickname is required.');
+    }
+    if (_apiBaseUrl.isEmpty || _session == null) {
+      throw Exception('Meal Mirror auth is not configured.');
+    }
+
+    final response = await _client.patch(
+      Uri.parse('$_apiBaseUrl/auth/profile'),
+      headers: {
+        'Authorization': 'Bearer ${_session!.token}',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({'displayName': trimmed}),
+    );
+
+    final payload = response.body.isEmpty
+        ? <String, dynamic>{}
+        : Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(
+        payload['error'] as String? ?? 'Could not update nickname.',
+      );
+    }
+
+    _session = AuthSession(
+      token: _session!.token,
+      userId: '${payload['userId'] ?? _session!.userId}',
+      phoneNumber: payload['phoneNumber'] as String? ?? _session!.phoneNumber,
+      displayName: payload['displayName'] as String? ?? trimmed,
+    );
+    await _storage.write(
+      key: _sessionStorageKey,
+      value: jsonEncode(_session!.toMap()),
+    );
+    notifyListeners();
+  }
+
+  Future<void> updatePassword({
+    required String currentPassword,
+    required String newPassword,
+    required String confirmPassword,
+  }) async {
+    if (_apiBaseUrl.isEmpty || _session == null) {
+      throw Exception('Meal Mirror auth is not configured.');
+    }
+
+    final response = await _client.post(
+      Uri.parse('$_apiBaseUrl/auth/password'),
+      headers: {
+        'Authorization': 'Bearer ${_session!.token}',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'currentPassword': currentPassword,
+        'newPassword': newPassword,
+        'confirmPassword': confirmPassword,
+      }),
+    );
+
+    final payload = response.body.isEmpty
+        ? <String, dynamic>{}
+        : Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(
+        payload['error'] as String? ?? 'Could not update password.',
+      );
+    }
+  }
+
+  Future<void> sendFeedback(String message) async {
+    if (_apiBaseUrl.isEmpty) {
+      throw Exception('Meal Mirror is not configured.');
+    }
+
+    final headers = <String, String>{'Content-Type': 'application/json'};
+    if (_session != null) {
+      headers['Authorization'] = 'Bearer ${_session!.token}';
+    }
+
+    final response = await _client.post(
+      Uri.parse('$_apiBaseUrl/feedback'),
+      headers: headers,
+      body: jsonEncode({'message': message}),
+    );
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final payload = response.body.isEmpty
+          ? <String, dynamic>{}
+          : Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+      throw Exception(payload['error'] as String? ?? 'Could not send feedback.');
+    }
   }
 
   Future<void> _authenticate(

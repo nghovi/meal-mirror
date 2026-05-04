@@ -120,65 +120,69 @@ class _AuthPageState extends State<AuthPage> {
                       fontWeight: FontWeight.w700,
                     ),
                   ),
-                  const SizedBox(height: 10),
-                  Text(
-                    'Your meals, drinks, and Mira chat will live on the server, not only on this phone.',
-                    style: theme.textTheme.bodyLarge?.copyWith(
-                      color: const Color(0xFF6E6257),
-                    ),
-                  ),
-                  const SizedBox(height: 28),
+                  const SizedBox(height: 18),
                   Card(
                     child: Padding(
-                      padding: const EdgeInsets.all(20),
+                      padding: const EdgeInsets.all(18),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           if (_isRegistering) ...[
-                            TextField(
-                              controller: _displayNameController,
-                              textInputAction: TextInputAction.next,
-                              decoration: const InputDecoration(
-                                labelText: 'Display name',
-                                hintText: 'How should Mira greet you?',
+                            _AuthFieldCard(
+                              icon: Icons.badge_outlined,
+                              label: 'Display name',
+                              child: TextField(
+                                controller: _displayNameController,
+                                textInputAction: TextInputAction.next,
+                                decoration: _authInputDecoration(
+                                  hintText: 'How should Mira greet you?',
+                                ),
                               ),
                             ),
-                            const SizedBox(height: 14),
+                            const SizedBox(height: 10),
                           ],
-                          TextField(
-                            controller: _phoneController,
-                            keyboardType: TextInputType.phone,
-                            textInputAction: TextInputAction.next,
-                            decoration: const InputDecoration(
-                              labelText: 'Phone number',
-                              hintText: 'Example: 0912345678',
+                          _AuthFieldCard(
+                            icon: Icons.phone_outlined,
+                            label: 'Phone number',
+                            child: TextField(
+                              controller: _phoneController,
+                              keyboardType: TextInputType.phone,
+                              textInputAction: TextInputAction.next,
+                              decoration: _authInputDecoration(
+                                hintText: 'Example: 0912345678',
+                              ),
                             ),
                           ),
-                          const SizedBox(height: 14),
-                          TextField(
-                            controller: _passwordController,
-                            obscureText: true,
-                            textInputAction: _isRegistering
-                                ? TextInputAction.next
-                                : TextInputAction.done,
-                            decoration: const InputDecoration(
-                              labelText: 'Password',
-                              hintText: 'At least 8 characters',
+                          const SizedBox(height: 10),
+                          _AuthFieldCard(
+                            icon: Icons.lock_outline_rounded,
+                            label: 'Password',
+                            child: TextField(
+                              controller: _passwordController,
+                              obscureText: true,
+                              textInputAction: _isRegistering
+                                  ? TextInputAction.next
+                                  : TextInputAction.done,
+                              decoration: _authInputDecoration(
+                                hintText: 'At least 8 characters',
+                              ),
                             ),
                           ),
                           if (_isRegistering) ...[
-                            const SizedBox(height: 14),
-                            TextField(
-                              controller: _confirmPasswordController,
-                              obscureText: true,
-                              textInputAction: TextInputAction.done,
-                              decoration: const InputDecoration(
-                                labelText: 'Confirm password',
+                            const SizedBox(height: 10),
+                            _AuthFieldCard(
+                              icon: Icons.verified_user_outlined,
+                              label: 'Confirm password',
+                              child: TextField(
+                                controller: _confirmPasswordController,
+                                obscureText: true,
+                                textInputAction: TextInputAction.done,
+                                decoration: _authInputDecoration(),
                               ),
                             ),
                           ],
                           if (_error != null) ...[
-                            const SizedBox(height: 14),
+                            const SizedBox(height: 12),
                             Text(
                               _error!,
                               style: const TextStyle(
@@ -187,7 +191,7 @@ class _AuthPageState extends State<AuthPage> {
                               ),
                             ),
                           ],
-                          const SizedBox(height: 20),
+                          const SizedBox(height: 18),
                           SizedBox(
                             width: double.infinity,
                             child: FilledButton(
@@ -212,13 +216,25 @@ class _AuthPageState extends State<AuthPage> {
                                         _error = null;
                                       });
                                     },
-                              child: Text(
-                                _isRegistering
-                                    ? 'Already have an account? Sign in'
-                                    : 'New here? Create an account',
-                                style: const TextStyle(
-                                  color: Color(0xFF2E6FD8),
-                                  fontWeight: FontWeight.w700,
+                              child: Text.rich(
+                                TextSpan(
+                                  text: _isRegistering
+                                      ? 'Already have an account? '
+                                      : 'New here? ',
+                                  style: const TextStyle(
+                                    color: Colors.black,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                  children: [
+                                    TextSpan(
+                                      text: _isRegistering
+                                          ? 'Sign in'
+                                          : 'Create an account',
+                                      style: const TextStyle(
+                                        color: Color(0xFF2E6FD8),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ),
@@ -232,6 +248,95 @@ class _AuthPageState extends State<AuthPage> {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  InputDecoration _authInputDecoration({String? hintText}) {
+    return InputDecoration(
+      hintText: hintText,
+      hintStyle: const TextStyle(
+        color: Color(0xFFC4B6AA),
+      ),
+      filled: true,
+      fillColor: const Color(0xFFFAF7F3),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide.none,
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: Color(0xFFE8DBCF)),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(
+          color: Color(0xFFB85C38),
+          width: 1.25,
+        ),
+      ),
+      contentPadding: const EdgeInsets.symmetric(
+        horizontal: 14,
+        vertical: 12,
+      ),
+    );
+  }
+}
+
+class _AuthFieldCard extends StatelessWidget {
+  const _AuthFieldCard({
+    required this.icon,
+    required this.label,
+    required this.child,
+  });
+
+  final IconData icon;
+  final String label;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF1E7),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  icon,
+                  size: 16,
+                  color: const Color(0xFF8A664F),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  label,
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: const Color(0xFF5E5147),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          child,
+        ],
       ),
     );
   }

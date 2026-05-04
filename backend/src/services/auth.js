@@ -27,6 +27,18 @@ export async function findUserByPhoneNumber(phoneNumber) {
   return rows[0] ?? null;
 }
 
+async function findUserCredentialsById(userId) {
+  const [rows] = await pool.query(
+    `select id, display_name as displayName, phone_number as phoneNumber,
+            password_hash as passwordHash, auth_provider as authProvider
+     from users
+     where id = ?
+     limit 1`,
+    [userId]
+  );
+  return rows[0] ?? null;
+}
+
 export async function createPhoneUser({ phoneNumber, password, displayName }) {
   const passwordHash = createPasswordHash(password);
   const normalizedDisplayName =
@@ -148,4 +160,62 @@ export async function loginWithPhone(body) {
     phoneNumber: user.phoneNumber ?? phoneNumber,
     displayName: user.displayName ?? "Meal Mirror User"
   };
+}
+
+export async function updateDisplayName(userId, body) {
+  const displayName = String(body.displayName || body.nickname || "").trim();
+  if (displayName.isEmpty) {
+    throw new Error("Nickname is required.");
+  }
+  if (displayName.length > 60) {
+    throw new Error("Nickname is too long.");
+  }
+
+  await pool.query(
+    `update users
+     set display_name = ?
+     where id = ?`,
+    [displayName, userId]
+  );
+
+  const user = await findUserCredentialsById(userId);
+  if (!user) {
+    throw new Error("User not found.");
+  }
+
+  return {
+    userId: String(user.id),
+    phoneNumber: user.phoneNumber ?? "",
+    displayName: user.displayName ?? displayName
+  };
+}
+
+export async function updatePassword(userId, body) {
+  const currentPassword = String(body.currentPassword || "");
+  const newPassword = String(body.newPassword || "");
+  const confirmPassword = String(body.confirmPassword || "");
+
+  if (currentPassword.isEmpty) {
+    throw new Error("Current password is required.");
+  }
+  if (!isValidPassword(newPassword)) {
+    throw new Error("New password must be at least 8 characters.");
+  }
+  if (newPassword !== confirmPassword) {
+    throw new Error("Password confirmation does not match.");
+  }
+
+  const user = await findUserCredentialsById(userId);
+  if (!user || !verifyPassword(currentPassword, user.passwordHash)) {
+    throw new Error("Current password is incorrect.");
+  }
+
+  await pool.query(
+    `update users
+     set password_hash = ?
+     where id = ?`,
+    [createPasswordHash(newPassword), userId]
+  );
+
+  return { ok: true };
 }

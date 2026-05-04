@@ -26,6 +26,8 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Meal Mirror uses the camera so you can capture meals and drinks for tracking.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Meal Mirror uses your location to suggest local weekly meal plans.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Meal Mirror uses your photo library so you can attach meal and drink photos.</string>
 	<key>UILaunchStoryboardName</key>

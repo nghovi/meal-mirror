@@ -202,6 +202,19 @@ await connection.query(`
       foreign key (user_id) references users(id)
       on delete cascade
   );
+
+  create table if not exists feedback (
+    id bigint primary key auto_increment,
+    user_id bigint null,
+    message text not null,
+    platform varchar(32) not null default '',
+    app_version varchar(32) not null default '',
+    created_at timestamp default current_timestamp,
+    index idx_feedback_user_id (user_id),
+    constraint fk_feedback_user_id
+      foreign key (user_id) references users(id)
+      on delete set null
+  );
 `);
 
 await connection.query(`

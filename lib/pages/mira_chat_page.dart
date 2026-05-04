@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -25,15 +26,24 @@ class MiraChatPage extends StatefulWidget {
 }
 
 class _MiraChatPageState extends State<MiraChatPage> {
+  static const int _initialHistoryBatchSize = 12;
+  static const int _olderHistoryBatchSize = 20;
+
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  late List<_ChatMessage> _messages = [
+  final List<_ChatMessage> _seedMessages = const [
     _ChatMessage.coach(
       'I am Mira. Ask me about your meals, drinks, calories, or how your recent eating pattern lines up with your mission.',
     ),
   ];
+  late List<_ChatMessage> _messages = [
+    ..._seedMessages,
+  ];
   bool _isLoadingHistory = true;
+  bool _isLoadingOlder = false;
   bool _isSending = false;
+  int _loadedSavedMessageCount = 0;
+  int _totalSavedMessageCount = 0;
 
   @override
   void initState() {
@@ -49,7 +59,9 @@ class _MiraChatPageState extends State<MiraChatPage> {
   }
 
   Future<void> _loadSavedMessages() async {
-    final saved = await widget.repository.loadMiraMessages();
+    final saved = await widget.repository.loadLocalMiraMessages(
+      limit: _initialHistoryBatchSize,
+    );
     if (!mounted) {
       return;
     }
@@ -60,17 +72,21 @@ class _MiraChatPageState extends State<MiraChatPage> {
         .toList();
 
     setState(() {
-      _messages = restored.isEmpty
-          ? [
-              _ChatMessage.coach(
-                'I am Mira. Ask me about your meals, drinks, calories, or how your recent eating pattern lines up with your mission.',
-              ),
-            ]
-          : restored;
+      _messages = restored.isEmpty ? [..._seedMessages] : restored;
+      _loadedSavedMessageCount = restored.length;
+      _totalSavedMessageCount = restored.length;
       _isLoadingHistory = false;
     });
 
     _scrollToBottom();
+
+    final totalSaved = await widget.repository.loadLocalMiraMessages();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _totalSavedMessageCount = totalSaved.length;
+    });
   }
 
   Future<void> _persistMessages() {
@@ -98,10 +114,7 @@ class _MiraChatPageState extends State<MiraChatPage> {
         message: message,
         recentEntries: widget.recentEntries,
         dietGoalBrief: widget.dietGoalBrief,
-        conversationMessages: _messages
-            .take(_messages.length - 1)
-            .map((message) => message.toMap())
-            .toList(),
+        conversationMessages: _recentConversationContext(),
       );
 
       if (!mounted) {
@@ -158,14 +171,80 @@ class _MiraChatPageState extends State<MiraChatPage> {
 
   Future<void> _clearConversation() async {
     setState(() {
-      _messages = [
-        _ChatMessage.coach(
-          'I am Mira. Ask me about your meals, drinks, calories, or how your recent eating pattern lines up with your mission.',
-        ),
-      ];
+      _messages = [..._seedMessages];
+      _loadedSavedMessageCount = 0;
+      _totalSavedMessageCount = 0;
     });
     await widget.repository.clearMiraMessages();
     await _persistMessages();
+  }
+
+  List<Map<String, dynamic>> _recentConversationContext() {
+    if (_messages.length <= 1) {
+      return const [];
+    }
+
+    final conversation = _messages.take(_messages.length - 1).toList();
+    final start = math.max(0, conversation.length - 8);
+    return conversation
+        .sublist(start)
+        .map((message) => message.toMap())
+        .toList();
+  }
+
+  bool get _hasOlderMessages =>
+      _loadedSavedMessageCount < _totalSavedMessageCount;
+
+  Future<void> _loadOlderMessages() async {
+    if (_isLoadingHistory || _isLoadingOlder || !_hasOlderMessages) {
+      return;
+    }
+
+    setState(() {
+      _isLoadingOlder = true;
+    });
+
+    final previousOffset =
+        _scrollController.hasClients ? _scrollController.offset : 0.0;
+    final previousMaxExtent = _scrollController.hasClients
+        ? _scrollController.position.maxScrollExtent
+        : 0.0;
+
+    final older = await widget.repository.loadLocalMiraMessages(
+      limit: _olderHistoryBatchSize,
+      offsetFromEnd: _loadedSavedMessageCount,
+    );
+    if (!mounted) {
+      return;
+    }
+
+    final restored = older
+        .map((item) => _ChatMessage.fromMap(_repairMessageMap(item)))
+        .where((message) => message.text.trim().isNotEmpty)
+        .toList();
+
+    if (restored.isEmpty) {
+      setState(() {
+        _isLoadingOlder = false;
+        _loadedSavedMessageCount = _totalSavedMessageCount;
+      });
+      return;
+    }
+
+    setState(() {
+      _messages = [...restored, ..._messages];
+      _loadedSavedMessageCount += restored.length;
+      _isLoadingOlder = false;
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients) {
+        return;
+      }
+      final newMaxExtent = _scrollController.position.maxScrollExtent;
+      final delta = newMaxExtent - previousMaxExtent;
+      _scrollController.jumpTo(previousOffset + math.max(0, delta));
+    });
   }
 
   Future<void> _confirmClearConversation() async {
@@ -175,7 +254,7 @@ class _MiraChatPageState extends State<MiraChatPage> {
         return AlertDialog(
           title: const Text('Delete Mira chat?'),
           content: const Text(
-            'This will remove your saved conversation with Mira from this device.',
+            'This will delete your conversation with Mira.',
           ),
           actions: [
             TextButton(
@@ -217,7 +296,9 @@ class _MiraChatPageState extends State<MiraChatPage> {
         title: const Text('Chat with Mira'),
         actions: [
           IconButton(
-            onPressed: _isSending || _isLoadingHistory ? null : _confirmClearConversation,
+            onPressed: _isSending || _isLoadingHistory
+                ? null
+                : _confirmClearConversation,
             tooltip: 'Clear chat',
             icon: const Icon(Icons.delete_outline_rounded),
           ),
@@ -310,46 +391,61 @@ class _MiraChatPageState extends State<MiraChatPage> {
           Expanded(
             child: _isLoadingHistory
                 ? const Center(child: CircularProgressIndicator())
-                : ListView.separated(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                    itemCount: _messages.length + (_isSending ? 1 : 0),
-                    separatorBuilder: (context, index) => const SizedBox(height: 12),
-                    itemBuilder: (context, index) {
-                      if (_isSending && index == _messages.length) {
-                        return const _TypingBubble();
-                      }
-                      final message = _messages[index];
-                      return Align(
-                        alignment: message.isUser
-                            ? Alignment.centerRight
-                            : Alignment.centerLeft,
-                        child: Container(
-                          constraints: const BoxConstraints(maxWidth: 320),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 12,
-                          ),
-                          decoration: BoxDecoration(
-                            color: message.isUser
-                                ? const Color(0xFF7A4B2F)
-                                : Colors.white,
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Text(
-                            message.text,
-                            style: TextStyle(
+                : RefreshIndicator(
+                    onRefresh: _loadOlderMessages,
+                    notificationPredicate: (notification) =>
+                        notification.depth == 0,
+                    child: ListView.separated(
+                      controller: _scrollController,
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                      itemCount: _messages.length +
+                          (_isSending ? 1 : 0) +
+                          (_hasOlderMessages ? 1 : 0),
+                      separatorBuilder: (context, index) =>
+                          const SizedBox(height: 12),
+                      itemBuilder: (context, index) {
+                        if (_hasOlderMessages && index == 0) {
+                          return _HistoryLoadHint(isLoading: _isLoadingOlder);
+                        }
+
+                        final messageIndex =
+                            index - (_hasOlderMessages ? 1 : 0);
+                        if (_isSending && messageIndex == _messages.length) {
+                          return const _TypingBubble();
+                        }
+                        final message = _messages[messageIndex];
+                        return Align(
+                          alignment: message.isUser
+                              ? Alignment.centerRight
+                              : Alignment.centerLeft,
+                          child: Container(
+                            constraints: const BoxConstraints(maxWidth: 320),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 12,
+                            ),
+                            decoration: BoxDecoration(
                               color: message.isUser
-                                  ? Colors.white
-                                  : const Color(0xFF2F251F),
-                              height: 1.4,
+                                  ? const Color(0xFF7A4B2F)
+                                  : Colors.white,
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              message.text,
+                              style: TextStyle(
+                                color: message.isUser
+                                    ? Colors.white
+                                    : const Color(0xFF2F251F),
+                                height: 1.4,
+                              ),
                             ),
                           ),
-                        ),
-                      );
-                    },
+                        );
+                      },
+                    ),
                   ),
-                  ),
+          ),
           SafeArea(
             top: false,
             child: Padding(
@@ -374,7 +470,8 @@ class _MiraChatPageState extends State<MiraChatPage> {
                   ),
                   const SizedBox(width: 10),
                   FilledButton(
-                    onPressed: _isSending || _isLoadingHistory ? null : _sendMessage,
+                    onPressed:
+                        _isSending || _isLoadingHistory ? null : _sendMessage,
                     style: FilledButton.styleFrom(
                       minimumSize: const Size(54, 54),
                       shape: RoundedRectangleBorder(
@@ -409,6 +506,42 @@ class _PromptChip extends StatelessWidget {
       child: ActionChip(
         onPressed: onTap,
         label: Text(label),
+      ),
+    );
+  }
+}
+
+class _HistoryLoadHint extends StatelessWidget {
+  const _HistoryLoadHint({
+    required this.isLoading,
+  });
+
+  final bool isLoading;
+
+  @override
+  Widget build(BuildContext context) {
+    final textStyle = Theme.of(context).textTheme.bodySmall?.copyWith(
+          color: const Color(0xFF8E6F5C),
+        );
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.only(top: 4, bottom: 2),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (isLoading) ...[
+              const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: 8),
+              Text('Loading earlier messages...', style: textStyle),
+            ] else
+              Text('Pull down to load earlier messages', style: textStyle),
+          ],
+        ),
       ),
     );
   }
